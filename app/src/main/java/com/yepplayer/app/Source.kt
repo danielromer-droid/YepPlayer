@@ -7,7 +7,10 @@ import java.net.URL
 import java.net.URLEncoder
 
 object Source {
-    const val USER_AGENT = "YepPlayer/0.3"
+    const val USER_AGENT = "YepPlayer/0.4"
+
+    fun resumeKey(url: String) = "resume|" + url.substringAfterLast('/')
+    fun durationKey(url: String) = "resume_dur|" + url.substringAfterLast('/')
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
@@ -94,12 +97,42 @@ object Source {
             }
             val logo = if (kind == "series") o.optString("cover") else o.optString("stream_icon")
             MediaItem(
-                id, o.optString("name", "Untitled"), url,
+                id, o.optString("name", "Untitled").trim(), url,
                 cats[o.optString("category_id")] ?: "Other", kind,
                 o.optString("epg_channel_id"), o.optInt("tv_archive") == 1,
-                if (kind == "series") id else "", logo, o.optInt("tv_archive_duration")
+                if (kind == "series") id else "", logo, o.optInt("tv_archive_duration"),
+                o.optString("rating").takeIf { it != "0" && it != "null" }.orEmpty(),
+                (o.optString("added").ifBlank { o.optString("last_modified") }).toLongOrNull() ?: 0L,
+                o.optInt("num", i + 1)
             )
         }
+    }
+
+    /** Plot, year, etc. for a movie (get_vod_info) or series (get_series_info). */
+    fun details(p: Profile, item: MediaItem): Details? {
+        if (p.type != "xtream") return null
+        val root = if (item.kind == "series") JSONObject(get(api(p, "get_series_info", "&series_id=${enc(item.seriesId.ifBlank { item.id })}")))
+                   else JSONObject(get(api(p, "get_vod_info", "&vod_id=${enc(item.id)}")))
+        val info = root.optJSONObject("info") ?: return null
+        fun s(vararg keys: String) = keys.map { info.optString(it) }.firstOrNull { it.isNotBlank() && it != "null" }.orEmpty()
+        return Details(
+            s("plot", "description"), s("releasedate", "releaseDate", "year").take(4), s("duration"),
+            s("genre"), s("rating"), s("movie_image", "cover", "cover_big")
+        )
+    }
+
+    /** The saved profile, with the password decrypted. */
+    fun readProfile(prefs: android.content.SharedPreferences): Profile? = try {
+        val j = JSONObject(prefs.getString("profile", "")!!)
+        val pass = j.optString("password_enc").takeIf { it.isNotBlank() }?.let { Secure.decrypt(it) } ?: j.optString("password")
+        Profile(j.getString("type"), j.getString("base"), j.optString("username"), pass)
+    } catch (_: Exception) { null }
+
+    fun saveProfile(prefs: android.content.SharedPreferences, p: Profile) {
+        val j = JSONObject().put("type", p.type).put("base", p.base).put("username", p.username)
+        val enc = try { Secure.encrypt(p.password) } catch (_: Exception) { null }
+        if (enc != null) j.put("password_enc", enc) else j.put("password", p.password)
+        prefs.edit().putString("profile", j.toString()).apply()
     }
 
     fun episodes(p: Profile, seriesId: String): List<MediaItem> {

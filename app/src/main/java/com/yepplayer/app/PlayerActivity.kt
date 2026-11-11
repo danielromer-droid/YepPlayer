@@ -14,6 +14,7 @@ import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -47,6 +48,19 @@ class PlayerActivity : Activity() {
 
     private var urls = arrayOf<String>()
     private var names = arrayOf<String>()
+    private var ids = arrayOf<String>()
+    private var nums = intArrayOf()
+    private lateinit var infoCard: LinearLayout
+    private lateinit var infoNum: TextView
+    private lateinit var infoName: TextView
+    private lateinit var nowTitle: TextView
+    private lateinit var nowTime: TextView
+    private lateinit var nextTitle: TextView
+    private lateinit var nextTime: TextView
+    private lateinit var nowBar: View
+    private lateinit var nowTrack: FrameLayout
+    private val epgPool = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val timeFmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
     private var index = 0
     private var live = false
     private var triedFallback = false
@@ -64,6 +78,8 @@ class PlayerActivity : Activity() {
         index = savedInstanceState?.getInt("index") ?: intent.getIntExtra("index", 0)
         if (index !in urls.indices || names.size != urls.size) { urls = arrayOf(single); names = arrayOf(intent.getStringExtra("name") ?: "YepPlayer"); index = 0 }
         live = intent.getBooleanExtra("live", false)
+        ids = intent.getStringArrayExtra("ids")?.takeIf { it.size == urls.size } ?: arrayOf()
+        nums = intent.getIntArrayExtra("nums")?.takeIf { it.size == urls.size } ?: IntArray(urls.size) { it + 1 }
         resizeMode = prefs.getInt("resize_mode", AspectRatioFrameLayout.RESIZE_MODE_FIT)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -74,7 +90,8 @@ class PlayerActivity : Activity() {
             setShowPreviousButton(false)
             keepScreenOn = true
             this.resizeMode = this@PlayerActivity.resizeMode
-            setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v -> topBar.visibility = v })
+            setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v -> topBar.visibility = v; if (live) infoCard.visibility = v })
+            if (live) { setShowFastForwardButton(false); setShowRewindButton(false) }
         }
         root.addView(view, FrameLayout.LayoutParams(-1, -1))
 
@@ -84,15 +101,58 @@ class PlayerActivity : Activity() {
             setPadding(dp(12), dp(10), dp(12), dp(10))
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.argb(200, 0, 0, 0), Color.TRANSPARENT))
         }
-        topBar.addView(barButton("‹") { finish() })
-        title = TextView(this).apply { textSize = 17f; setTextColor(Color.WHITE); setPadding(dp(10), 0, dp(10), 0); maxLines = 1 }
+        topBar.addView(roundIcon(R.drawable.ic_back, "Back") { finish() })
+        title = TextView(this).apply { textSize = 17f; setTextColor(Color.WHITE); setPadding(dp(12), 0, dp(10), 0); maxLines = 1; typeface = android.graphics.Typeface.DEFAULT_BOLD }
         topBar.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-        if (urls.size > 1) {
-            topBar.addView(barButton("CH −") { zap(-1) })
-            topBar.addView(barButton("CH +") { zap(1) })
-        }
-        topBar.addView(barButton("⤢") { cycleResize() })
+        topBar.addView(roundIcon(R.drawable.ic_aspect, "Aspect ratio") { cycleResize() })
         root.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+
+        // Live channel info: number, name, now / next with progress, channel up / down.
+        infoCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+            background = GradientDrawable().apply { setColor(Color.argb(240, 15, 21, 32)); cornerRadius = dp(20).toFloat(); setStroke(dp(1), Color.rgb(37, 48, 66)) }
+            visibility = if (live) View.VISIBLE else View.GONE
+        }
+        if (urls.size > 1) infoCard.addView(roundIcon(R.drawable.ic_up, "Previous channel") { zap(-1) })
+        val numBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            background = GradientDrawable().apply { setColor(Color.rgb(28, 39, 56)); cornerRadius = dp(14).toFloat() }
+        }
+        infoNum = label("", 13f, Color.rgb(154, 168, 188), true)
+        numBox.addView(infoNum)
+        infoCard.addView(numBox, LinearLayout.LayoutParams(dp(64), dp(64)).apply { leftMargin = dp(14) })
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, dp(16), 0) }
+        val nameRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        infoName = label("", 19f, Color.WHITE, true)
+        nameRow.addView(infoName)
+        nameRow.addView(label("LIVE", 10f, Color.WHITE, true).apply {
+            setPadding(dp(7), dp(3), dp(7), dp(3)); letterSpacing = 0.08f
+            background = GradientDrawable().apply { setColor(Color.rgb(229, 72, 77)); cornerRadius = dp(6).toFloat() }
+        }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(10) })
+        col.addView(nameRow)
+        val nowRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        nowRow.addView(label("NOW", 13f, Color.rgb(255, 159, 67), true))
+        nowTitle = label("", 14f, Color.WHITE, false)
+        nowRow.addView(nowTitle, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(12) })
+        nowTime = label("", 13f, Color.rgb(154, 168, 188), false)
+        nowRow.addView(nowTime)
+        col.addView(nowRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        nowTrack = FrameLayout(this).apply { background = GradientDrawable().apply { setColor(Color.rgb(37, 48, 66)); cornerRadius = dp(3).toFloat() } }
+        nowBar = View(this).apply { background = GradientDrawable().apply { setColor(Color.rgb(255, 159, 67)); cornerRadius = dp(3).toFloat() } }
+        nowTrack.addView(nowBar, FrameLayout.LayoutParams(0, -1))
+        col.addView(nowTrack, LinearLayout.LayoutParams(-1, dp(5)).apply { topMargin = dp(8) })
+        val nextRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        nextRow.addView(label("NEXT", 12f, Color.rgb(154, 168, 188), true))
+        nextTitle = label("", 13f, Color.rgb(154, 168, 188), false)
+        nextRow.addView(nextTitle, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(12) })
+        nextTime = label("", 12f, Color.rgb(154, 168, 188), false)
+        nextRow.addView(nextTime)
+        col.addView(nextRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        infoCard.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+        if (urls.size > 1) infoCard.addView(roundIcon(R.drawable.ic_down, "Next channel") { zap(1) })
+        // Sits above the player's own seek/controls bar.
+        root.addView(infoCard, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(24), 0, dp(24), dp(84)) })
 
         spinner = ProgressBar(this).apply { isIndeterminate = true; visibility = View.GONE }
         root.addView(spinner, FrameLayout.LayoutParams(dp(56), dp(56), Gravity.CENTER))
@@ -116,6 +176,52 @@ class PlayerActivity : Activity() {
         minWidth = dp(48); minHeight = dp(40); setPadding(dp(10), 0, dp(10), 0)
         background = GradientDrawable().apply { setColor(Color.argb(140, 40, 60, 90)); cornerRadius = dp(12).toFloat() }
         setOnClickListener { onClick() }
+    }
+
+    private fun label(value: String, size: Float, color: Int, bold: Boolean) = TextView(this).apply {
+        text = value; textSize = size; setTextColor(color); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        if (bold) typeface = android.graphics.Typeface.DEFAULT_BOLD
+    }
+
+    private fun roundIcon(res: Int, desc: String, onClick: () -> Unit) = FrameLayout(this).apply {
+        contentDescription = desc
+        background = android.graphics.drawable.StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(Color.rgb(28, 39, 56)); cornerRadius = dp(24).toFloat(); setStroke(dp(2), Color.rgb(47, 123, 255)) })
+            addState(intArrayOf(), GradientDrawable().apply { setColor(Color.argb(230, 28, 39, 56)); cornerRadius = dp(24).toFloat() })
+        }
+        addView(ImageView(this@PlayerActivity).apply { setImageResource(res); imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE) }, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+        layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(8) }
+        isClickable = true; isFocusable = true
+        setOnClickListener { onClick() }
+    }
+
+    private fun updateInfo() {
+        if (!live) return
+        infoNum.text = nums.getOrNull(index)?.toString() ?: ""
+        infoName.text = names[index]
+        nowTitle.text = ""; nowTime.text = ""; nextTitle.text = ""; nextTime.text = ""
+        nowBar.layoutParams = FrameLayout.LayoutParams(0, -1)
+        val id = ids.getOrNull(index) ?: return
+        val p = Source.readProfile(prefs) ?: return
+        if (p.type != "xtream") return
+        val forIndex = index
+        epgPool.execute {
+            val list = try { Source.epg(p, id) } catch (_: Exception) { emptyList() }
+            runOnUiThread {
+                if (forIndex != index || isFinishing) return@runOnUiThread
+                val now = System.currentTimeMillis() / 1000
+                val cur = list.firstOrNull { it.isNow(now) }
+                val next = list.firstOrNull { it.start >= (cur?.stop ?: now) }
+                nowTitle.text = cur?.title ?: "No guide data"
+                nowTime.text = cur?.let { "${timeFmt.format(java.util.Date(it.start * 1000))} – ${timeFmt.format(java.util.Date(it.stop * 1000))}" } ?: ""
+                nextTitle.text = next?.title ?: ""
+                nextTime.text = next?.let { timeFmt.format(java.util.Date(it.start * 1000)) } ?: ""
+                if (cur != null) {
+                    val frac = ((now - cur.start).toFloat() / (cur.stop - cur.start)).coerceIn(0f, 1f)
+                    nowTrack.post { nowBar.layoutParams = FrameLayout.LayoutParams((nowTrack.width * frac).toInt(), -1) }
+                }
+            }
+        }
     }
 
     private fun hideSystemUi() {
@@ -176,7 +282,6 @@ class PlayerActivity : Activity() {
         topBar.visibility = View.VISIBLE
     }
 
-    private fun resumeKey(url: String) = "resume|" + url.substringAfterLast('/')
 
     private fun play(url: String) {
         val p = player ?: return
@@ -184,9 +289,10 @@ class PlayerActivity : Activity() {
         currentUrl = url
         title.text = names[index]
         errorBox.visibility = View.GONE
+        updateInfo()
         p.setMediaItem(MediaItem.fromUri(url))
         if (!live) {
-            val pos = prefs.getLong(resumeKey(url), 0L)
+            val pos = prefs.getLong(Source.resumeKey(url), 0L)
             if (pos > 0) p.seekTo(pos)
         }
         p.prepare()
@@ -198,7 +304,8 @@ class PlayerActivity : Activity() {
         if (live || currentUrl.isEmpty()) return
         val pos = p.currentPosition; val dur = p.duration
         val e = prefs.edit()
-        if (dur > 0 && pos > 30_000 && pos < dur - 60_000) e.putLong(resumeKey(currentUrl), pos) else if (dur > 0) e.remove(resumeKey(currentUrl))
+        if (dur > 0 && pos > 30_000 && pos < dur - 60_000) e.putLong(Source.resumeKey(currentUrl), pos).putLong(Source.durationKey(currentUrl), dur)
+        else if (dur > 0) e.remove(Source.resumeKey(currentUrl)).remove(Source.durationKey(currentUrl))
         e.apply()
     }
 
@@ -247,6 +354,8 @@ class PlayerActivity : Activity() {
         player?.release(); player = null
         super.onStop()
     }
+
+    override fun onDestroy() { epgPool.shutdownNow(); super.onDestroy() }
 
     override fun onSaveInstanceState(outState: Bundle) { outState.putInt("index", index); super.onSaveInstanceState(outState) }
 }

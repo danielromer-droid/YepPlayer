@@ -10,8 +10,14 @@ data class MediaItem(
     val catchup: Boolean = false,
     val seriesId: String = "",
     val logoUrl: String = "",
-    val archiveDays: Int = 0
+    val archiveDays: Int = 0,
+    val rating: String = "",
+    val added: Long = 0L,
+    val num: Int = 0
 )
+
+/** Extra details for a movie or series, loaded when it is selected. */
+data class Details(val plot: String, val year: String, val duration: String, val genre: String, val rating: String, val cover: String)
 data class Profile(val type: String, val base: String, val username: String = "", val password: String = "")
 
 /** One programme from the Xtream EPG. Times are epoch seconds (UTC). */
