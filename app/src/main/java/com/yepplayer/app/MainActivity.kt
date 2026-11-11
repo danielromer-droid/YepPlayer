@@ -90,9 +90,9 @@ class MainActivity : Activity() {
         hero.addView(action(if (profile == null) "＋  Add your first playlist" else "⚙  Manage playlists", { configure() }, true))
         c.addView(hero)
         c.addView(label("BROWSE", 12f, muted, true))
-        val grid = arrayOf(
-            arrayOf("📺", "Live TV", "live"), arrayOf("🎬", "Movies", "vod"), arrayOf("▣", "Series", "series"),
-            arrayOf("▦", "TV Guide", "epg"), arrayOf("●", "Recordings", "recordings"), arrayOf("★", "Favourites", "favourites")
+        val grid = listOf(
+            listOf("📺", "Live TV", "live"), listOf("🎬", "Movies", "vod"), listOf("▣", "Series", "series"),
+            listOf("▦", "TV Guide", "epg"), listOf("●", "Recordings", "recordings"), listOf("★", "Favourites", "favourites")
         )
         for (r in grid.chunked(2)) {
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
