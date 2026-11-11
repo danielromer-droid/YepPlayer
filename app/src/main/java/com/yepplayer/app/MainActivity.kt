@@ -32,6 +32,9 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.statusBarColor = bg
+        window.navigationBarColor = Color.rgb(3, 7, 14)
+        window.decorView.systemUiVisibility = 0
         profile = readProfile()
         home()
     }
@@ -80,34 +83,169 @@ class MainActivity : Activity() {
         profile = p
     }
 
-    private fun home() {
-        screen("Your television, organised")
-        val c = scroll()
-        val hero = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = rounded(panel); setPadding(10, 8, 10, 12) }
-        hero.addView(label("WELCOME TO YEPPLAYER", 12f, blue, true))
-        hero.addView(label(if (profile == null) "Connect your IPTV service to get started" else "Connected • ${profile!!.type.uppercase()}", 16f, white, true))
-        hero.addView(label("Live channels · Movies · Series · TV guide", 12f, muted))
-        hero.addView(action(if (profile == null) "＋  Add your first playlist" else "⚙  Manage playlists", { configure() }, true))
-        c.addView(hero)
-        c.addView(label("BROWSE", 12f, muted, true))
-        val grid = listOf(
-            listOf("📺", "Live TV", "live"), listOf("🎬", "Movies", "vod"), listOf("▣", "Series", "series"),
-            listOf("▦", "TV Guide", "epg"), listOf("●", "Recordings", "recordings"), listOf("★", "Favourites", "favourites")
-        )
-        for (r in grid.chunked(2)) {
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            r.forEach { entry ->
-                val tile = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = rounded(panel2); setPadding(8, 12, 8, 12); gravity = Gravity.CENTER; setOnClickListener { when (entry[2]) { "favourites" -> showItems(items.filter { isFavourite(it) }, "Favourites"); "epg" -> load("live"); "recordings" -> recordings(); else -> load(entry[2]) } } }
-                tile.addView(label(entry[0], 25f, blue, true)); tile.addView(label(entry[1], 15f, white, true))
-                row.addView(tile, LinearLayout.LayoutParams(0, 104, 1f).apply { setMargins(4, 4, 4, 4) })
-            }
-            c.addView(row)
+    private fun homeCard(icon: String, title: String, subtitle: String, onClick: () -> Unit): LinearLayout {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(Color.rgb(17, 29, 48), 18f)
+            setPadding(14, 12, 12, 12)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
         }
-        c.addView(label("QUICK TOOLS", 12f, muted, true))
-        c.addView(action("Manage channels and groups", { manageGroups() }))
-        c.addView(action("Parental controls and PIN", { changePin() }))
-        c.addView(action("Settings", { settings() }))
-        c.addView(label("Only use streams and playlists you are authorised to access.", 11f, muted))
+        val symbol = TextView(this).apply {
+            text = icon
+            textSize = 23f
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(79, 185, 255))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.rgb(12, 65, 111), Color.rgb(24, 42, 78))
+            ).apply { cornerRadius = 15f }
+        }
+        card.addView(symbol, LinearLayout.LayoutParams(48, 48))
+        val copy = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(12, 0, 0, 0)
+        }
+        copy.addView(TextView(this).apply {
+            text = title
+            textSize = 13f
+            setTextColor(white)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, 2)
+            maxLines = 1
+        })
+        copy.addView(TextView(this).apply {
+            text = subtitle
+            textSize = 10f
+            setTextColor(muted)
+            setPadding(0, 0, 0, 0)
+            maxLines = 1
+        })
+        card.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(label("›", 24f, muted, true))
+        return card
+    }
+
+    private fun homeSection(value: String): TextView =
+        label(value.uppercase(), 11f, Color.rgb(112, 166, 222), true).apply {
+            setPadding(2, 18, 2, 8)
+            letterSpacing = 0.12f
+        }
+
+    private fun home() {
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+            setPadding(16, 10, 16, 8)
+        }
+        setContentView(root)
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 4, 0, 12)
+        }
+        val mark = TextView(this).apply {
+            text = "▶"
+            textSize = 21f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.rgb(0, 174, 255), Color.rgb(115, 72, 255))
+            ).apply { cornerRadius = 14f }
+        }
+        header.addView(mark, LinearLayout.LayoutParams(42, 42))
+        val brand = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(10, 0, 0, 0)
+        }
+        brand.addView(TextView(this).apply {
+            text = "YepPlayer"
+            textSize = 22f
+            setTextColor(white)
+            typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        })
+        brand.addView(label("YOUR ENTERTAINMENT HUB", 9f, muted, true))
+        header.addView(brand, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(action("⚙", { settings() }))
+        root.addView(header)
+
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            addView(content)
+        }, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val hero = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.rgb(13, 48, 88), Color.rgb(20, 31, 58), Color.rgb(37, 25, 75))
+            ).apply {
+                cornerRadius = 22f
+                setStroke(1, Color.rgb(43, 113, 190))
+            }
+            setPadding(18, 17, 18, 17)
+        }
+        hero.addView(label(if (profile == null) "WELCOME TO YEPPLAYER" else "YOUR PLAYLIST IS READY", 10f, Color.rgb(105, 202, 255), true))
+        hero.addView(label("TV, made yours.", 25f, white, true))
+        hero.addView(label(
+            if (profile == null) "Bring your live channels, films and series together."
+            else "Your ${profile!!.type.uppercase()} library is ready to explore.",
+            12f, Color.rgb(207, 220, 239)
+        ))
+        hero.addView(action(
+            if (profile == null) "＋   CONNECT YOUR PLAYLIST" else "＋   MANAGE PLAYLISTS",
+            { configure() }, true
+        ), LinearLayout.LayoutParams(-1, 50).apply { topMargin = 10 })
+        content.addView(hero)
+
+        content.addView(homeSection("Explore"))
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val rows = listOf(
+            listOf("Live TV", "Movies"),
+            listOf("Series", "TV Guide"),
+            listOf("Recordings", "Favourites")
+        )
+        rows.forEach { entries ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            entries.forEach { title ->
+                val details = when (title) {
+                    "Live TV" -> Triple("▣", "Channels & groups", { load("live") })
+                    "Movies" -> Triple("▤", "Your VOD library", { load("vod") })
+                    "Series" -> Triple("▧", "Seasons & episodes", { load("series") })
+                    "TV Guide" -> Triple("▦", "Programme listings", { load("live") })
+                    "Recordings" -> Triple("●", "PVR library", { recordings() })
+                    else -> Triple("★", "Your saved channels", { showItems(items.filter { isFavourite(it) }, "Favourites") })
+                }
+                val tile = homeCard(details.first, title, details.second, details.third)
+                row.addView(tile, LinearLayout.LayoutParams(0, 76, 1f).apply {
+                    if (title == entries[0]) rightMargin = 6 else leftMargin = 6
+                    bottomMargin = 10
+                })
+            }
+            grid.addView(row)
+        }
+        content.addView(grid)
+
+        content.addView(homeSection("Personalise your experience"))
+        content.addView(homeCard("☷", "Manage channels & groups", "Hide, show and organise channel groups") { manageGroups() })
+        content.addView(View(this), LinearLayout.LayoutParams(-1, 8))
+        content.addView(homeCard("⌑", "Parental controls", "Set or change your viewing PIN") { changePin() })
+        content.addView(View(this), LinearLayout.LayoutParams(-1, 8))
+        content.addView(homeCard("⚙", "Settings & playlists", "Accounts, playlists and app preferences") { settings() })
+
+        content.addView(TextView(this).apply {
+            text = "YepPlayer  •  Only use streams and playlists you are authorised to access."
+            textSize = 10f
+            setTextColor(Color.rgb(112, 128, 151))
+            gravity = Gravity.CENTER
+            setPadding(8, 18, 8, 12)
+        })
     }
 
     private fun configure() {
