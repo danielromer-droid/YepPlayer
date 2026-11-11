@@ -535,7 +535,10 @@ class MainActivity : Activity() {
         storeList("recent_items", (listOf(item) + recent().filterNot { sameItem(it, item) }).take(30))
         if (item.kind == "live") prefs.edit().putString("last_channel|${profile?.base}", itemJson(item).toString()).apply()
     }
-    private fun lastChannel(): MediaItem? = try { JSONObject(prefs.getString("last_channel|${profile?.base}", null) ?: return null).let { jsonItem(it) } } catch (_: Exception) { null }
+    private fun lastChannel(): MediaItem? {
+        val raw = prefs.getString("last_channel|${profile?.base}", null) ?: return null
+        return try { jsonItem(JSONObject(raw)) } catch (_: Exception) { null }
+    }
 
     // ---------- Opening items ----------
 
