@@ -195,7 +195,7 @@ class MainActivity : Activity() {
         stopPreview()
         refreshList = null
         clockTick?.let { main.removeCallbacks(it) }; clockTick = null
-        val root = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(C.bg) }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(C.rail); fitsSystemWindows = true } // keep clear of status/navigation bars (Android 15 edge-to-edge)
         val rail = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
             setBackgroundColor(C.rail); setPadding(0, dp(18), 0, dp(14))
@@ -222,7 +222,7 @@ class MainActivity : Activity() {
         rail.addView(View(this), lp(1, 0, 1f))
         item(R.drawable.ic_settings, "settings", "Settings") { settings() }
         root.addView(rail, LinearLayout.LayoutParams(dp(if (medium) 76 else 64), -1))
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(C.bg) }
         root.addView(content, lp(0, -1, 1f))
         setContentView(root)
         return content
