@@ -40,7 +40,7 @@ object Source {
                 "vod" -> "${base(p)}/movie/${enc(p.username)}/${enc(p.password)}/$id.$extension"
                 else -> ""
             }
-            MediaItem(id, o.optString("name", "Untitled"), url, cats[o.optString("category_id")] ?: "Other", kind, o.optString("epg_channel_id"), o.optInt("tv_archive") == 1, if(kind=="series") id else "")
+            MediaItem(id, o.optString("name", "Untitled"), url, cats[o.optString("category_id")] ?: "Other", kind, o.optString("epg_channel_id"), o.optInt("tv_archive") == 1, if(kind=="series") id else "", o.optString("stream_icon"))
         }
     }
     fun episodes(p: Profile, seriesId: String): List<MediaItem> {
@@ -70,16 +70,17 @@ object Source {
     }
     fun parseM3u(data: String): List<MediaItem> {
         val result=mutableListOf<MediaItem>()
-        var name=""; var group="Other"; var epg=""; var catchup=false
+        var name=""; var group="Other"; var epg=""; var logo=""; var catchup=false
         for(line in data.lineSequence().map { it.trim() }) {
             if(line.startsWith("#EXTINF",true)) {
                 name=line.substringAfterLast(',',"Channel").trim()
                 group=Regex("group-title=\"([^\"]*)\"").find(line)?.groupValues?.get(1) ?: "Other"
                 epg=Regex("tvg-id=\"([^\"]*)\"").find(line)?.groupValues?.get(1) ?: ""
+                logo=Regex("tvg-logo=\"([^\"]*)\"").find(line)?.groupValues?.get(1) ?: ""
                 catchup=line.contains("catchup=",true)
             } else if(line.isNotEmpty() && !line.startsWith('#') && (line.startsWith("https://") || line.startsWith("http://"))) {
-                result.add(MediaItem(result.size.toString(),name.ifBlank { "Channel" },line,group,"live",epg,catchup))
-                name=""; group="Other"; epg=""; catchup=false
+                result.add(MediaItem(result.size.toString(),name.ifBlank { "Channel" },line,group,"live",epg,catchup,"",logo))
+                name=""; group="Other"; epg=""; logo=""; catchup=false
             }
         }
         return result
