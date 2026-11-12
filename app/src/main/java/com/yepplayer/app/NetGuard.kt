@@ -14,6 +14,8 @@ import java.net.InetAddress
  */
 object NetGuard {
     @Volatile var allowLocal = false
+    /** Recordings folder: the only local files the player may open. */
+    @Volatile var fileRoot: String? = null
 
     class Blocked(message: String) : SecurityException(message)
 
@@ -31,6 +33,12 @@ object NetGuard {
     fun check(url: String) {
         val uri = Uri.parse(url)
         val scheme = uri.scheme?.lowercase()
+        if (scheme == "file") {
+            val root = fileRoot
+            val path = uri.path?.let { java.io.File(it).canonicalPath }
+            if (root != null && path != null && path.startsWith(root + java.io.File.separator)) return
+            throw Blocked("Blocked: only YepPlayer recordings can be opened from this device")
+        }
         if (scheme != "http" && scheme != "https") throw Blocked("Blocked: only http and https addresses are allowed ($scheme)")
         val host = uri.host ?: throw Blocked("Blocked: address has no server name")
         if (allowLocal) return

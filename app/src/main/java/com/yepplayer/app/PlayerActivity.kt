@@ -72,7 +72,7 @@ class PlayerActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        NetGuard.load(prefs)
+        NetGuard.load(prefs); NetGuard.fileRoot = RecordingService.dir(this).canonicalPath
         val single = intent.getStringExtra("url") ?: run { finish(); return }
         urls = intent.getStringArrayExtra("urls") ?: arrayOf(single)
         names = intent.getStringArrayExtra("names") ?: arrayOf(intent.getStringExtra("name") ?: "YepPlayer")
@@ -105,6 +105,7 @@ class PlayerActivity : Activity() {
         topBar.addView(roundIcon(R.drawable.ic_back, "Back") { finish() })
         title = TextView(this).apply { textSize = 17f; setTextColor(Color.WHITE); setPadding(dp(12), 0, dp(10), 0); maxLines = 1; typeface = android.graphics.Typeface.DEFAULT_BOLD }
         topBar.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        if (urls[index].startsWith("http")) topBar.addView(roundIcon(R.drawable.ic_record, "Record") { record() })
         topBar.addView(roundIcon(R.drawable.ic_aspect, "Aspect ratio") { cycleResize() })
         root.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
@@ -194,6 +195,27 @@ class PlayerActivity : Activity() {
         layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(8) }
         isClickable = true; isFocusable = true
         setOnClickListener { onClick() }
+    }
+
+    private fun record() {
+        val url = urls[index]
+        val name = names[index]
+        if (!live) {
+            android.app.AlertDialog.Builder(this).setTitle("Download")
+                .setMessage("Save \"$name\" on this device to watch it later? It uses one connection of your account while downloading.")
+                .setPositiveButton("Download") { _, _ -> RecordingService.start(this, url, name, 0); android.widget.Toast.makeText(this, "Download started", android.widget.Toast.LENGTH_SHORT).show() }
+                .setNegativeButton("Cancel", null).show()
+            return
+        }
+        val recUrl = if (url.endsWith(".m3u8") && url.contains("/live/")) url.removeSuffix(".m3u8") + ".ts" else url
+        if (recUrl.substringBefore('?').endsWith(".m3u8")) { android.widget.Toast.makeText(this, "This channel's stream type can't be recorded", android.widget.Toast.LENGTH_LONG).show(); return }
+        val options = arrayOf("30 minutes", "1 hour", "2 hours", "3 hours")
+        val mins = intArrayOf(30, 60, 120, 180)
+        android.app.AlertDialog.Builder(this).setTitle("Record $name")
+            .setItems(options) { _, which ->
+                RecordingService.start(this, recUrl, name, mins[which])
+                android.widget.Toast.makeText(this, "Recording started. Note: recording uses a second connection of your account.", android.widget.Toast.LENGTH_LONG).show()
+            }.setNegativeButton("Cancel", null).show()
     }
 
     private fun updateInfo() {
@@ -297,6 +319,7 @@ class PlayerActivity : Activity() {
         saveResume()
         currentUrl = url
         title.text = names[index]
+        if (live) prefs.edit().putString("last_live_url", urls[index]).apply()
         errorBox.visibility = View.GONE
         updateInfo()
         p.setMediaItem(MediaItem.fromUri(url))
@@ -355,6 +378,12 @@ class PlayerActivity : Activity() {
             view.player = player
             play(urls[index])
         }
+    }
+
+    // Free the provider connection as soon as we leave, so the preview window can start straight away.
+    override fun onPause() {
+        super.onPause()
+        if (isFinishing) { saveResume(); view.player = null; player?.release(); player = null }
     }
 
     override fun onStop() {

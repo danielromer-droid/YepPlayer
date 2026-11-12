@@ -18,7 +18,7 @@ object Source {
      * Downloads [url], following up to 5 redirects by hand so that every hop is checked by [NetGuard]
      * (a public server must not be able to bounce the app onto the home network).
      */
-    fun fetch(url: String, connectTimeout: Int = 12000, readTimeout: Int = 30000): ByteArray {
+    fun open(url: String, connectTimeout: Int = 12000, readTimeout: Int = 30000): HttpURLConnection {
         var current = url
         repeat(6) {
             NetGuard.check(current)
@@ -27,19 +27,26 @@ object Source {
             connection.readTimeout = readTimeout
             connection.instanceFollowRedirects = false
             connection.setRequestProperty("User-Agent", USER_AGENT)
-            try {
-                val code = connection.responseCode
-                if (code in 300..399) {
-                    val loc = connection.getHeaderField("Location") ?: error("Server redirect without a destination")
-                    current = URL(URL(current), loc).toString()
-                    return@repeat
-                }
-                if (code == 401 || code == 403) error("Access refused by the server (HTTP $code). Check your username and password.")
-                if (code !in 200..299) error("Server answered HTTP $code")
-                return connection.inputStream.use { it.readBytes() }
-            } finally { connection.disconnect() }
+            val code = try { connection.responseCode } catch (e: Exception) { connection.disconnect(); throw e }
+            if (code in 300..399) {
+                val loc = connection.getHeaderField("Location")
+                connection.disconnect()
+                current = URL(URL(current), loc ?: error("Server redirect without a destination")).toString()
+                return@repeat
+            }
+            if (code !in 200..299) {
+                connection.disconnect()
+                if (code == 401 || code == 403) error("Access refused by the server (HTTP $code). Check your username and password, or your connection limit.")
+                error("Server answered HTTP $code")
+            }
+            return connection
         }
         error("Too many redirects")
+    }
+
+    fun fetch(url: String, connectTimeout: Int = 12000, readTimeout: Int = 30000): ByteArray {
+        val c = open(url, connectTimeout, readTimeout)
+        try { return c.inputStream.use { it.readBytes() } } finally { c.disconnect() }
     }
 
     fun get(url: String): String = String(fetch(url), Charsets.UTF_8)

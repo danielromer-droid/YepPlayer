@@ -83,6 +83,7 @@ class MainActivity : Activity() {
     private val cache = mutableMapOf<String, List<MediaItem>>()
     private var back: (() -> Unit)? = null
     private var refreshList: (() -> Unit)? = null
+    private var resumePreview: (() -> Unit)? = null
     private var clockTick: Runnable? = null
     private var preview: ExoPlayer? = null
     private val prefs by lazy { getSharedPreferences("yepplayer", MODE_PRIVATE) }
@@ -100,11 +101,16 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = C.rail
         window.navigationBarColor = C.rail
-        NetGuard.load(prefs)
+        NetGuard.load(prefs); NetGuard.fileRoot = RecordingService.dir(this).canonicalPath
         profile = Source.readProfile(prefs)
         // Re-save once so an old plain-text password gets encrypted.
         profile?.let { if (prefs.getString("profile", "")?.contains("\"password\"") == true) Source.saveProfile(prefs, it) }
-        home()
+        if (intent?.getStringExtra("open") == "recordings") recordings() else home()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.getStringExtra("open") == "recordings") recordings()
     }
 
     @Deprecated("Deprecated in Java")
@@ -115,6 +121,9 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() { stopPreview(); super.onStop() }
+
+    /** Back from full screen: the channel carries on in the small preview window (wide screens). */
+    override fun onRestart() { super.onRestart(); resumePreview?.invoke() }
 
     // ---------------------------------------------------------------- building blocks
 
@@ -195,6 +204,7 @@ class MainActivity : Activity() {
     private fun shell(active: String): LinearLayout {
         stopPreview()
         refreshList = null
+        resumePreview = null
         clockTick?.let { main.removeCallbacks(it) }; clockTick = null
         val root = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(C.rail); fitsSystemWindows = true } // keep clear of status/navigation bars (Android 15 edge-to-edge)
         val rail = LinearLayout(this).apply {
@@ -204,6 +214,8 @@ class MainActivity : Activity() {
         val mark = FrameLayout(this).apply { background = shape(C.accent, 12) }
         mark.addView(icon(R.drawable.ic_play, Color.WHITE, 20), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
         rail.addView(mark, lp(dp(42), dp(42), b = 18))
+        val railItems = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        var target = railItems
         fun item(res: Int, key: String, desc: String, go: () -> Unit) {
             val on = key == active
             val f = FrameLayout(this).apply {
@@ -212,7 +224,7 @@ class MainActivity : Activity() {
                 addView(icon(res, if (on) Color.WHITE else C.muted, 22), FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
             }
             clickable(f, go)
-            rail.addView(f, lp(dp(52), dp(48), b = 8))
+            target.addView(f, lp(dp(52), dp(48), b = 8))
         }
         item(R.drawable.ic_home, "home", "Home") { home() }
         item(R.drawable.ic_live, "live", "Live TV") { load("live") }
@@ -220,7 +232,9 @@ class MainActivity : Activity() {
         item(R.drawable.ic_series, "series", "Series") { load("series") }
         item(R.drawable.ic_guide, "guide", "TV guide") { load("live", guide = true) }
         item(R.drawable.ic_star, "favs", "Favourites") { browse("favs", favourites(), "Favourites") }
-        rail.addView(View(this), lp(1, 0, 1f))
+        item(R.drawable.ic_record, "recordings", "Recordings") { recordings() }
+        rail.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(railItems) }, lp(-2, 0, 1f))
+        target = rail
         item(R.drawable.ic_settings, "settings", "Settings") { settings() }
         root.addView(rail, LinearLayout.LayoutParams(dp(if (medium) 76 else 64), -1))
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(C.bg) }
@@ -308,7 +322,7 @@ class MainActivity : Activity() {
         shortcut(R.drawable.ic_guide, "TV Guide") { load("live", guide = true) }
         shortcut(R.drawable.ic_replay, "Catch-up") { load("live", catchupOnly = true) }
         shortcut(R.drawable.ic_star, "Favourites") { browse("favs", favourites(), "Favourites") }
-        shortcut(R.drawable.ic_user, "Playlists") { configure() }
+        shortcut(R.drawable.ic_record, "Recordings") { recordings() }
         page.addView(shortcuts.view, lp(-1, -2, t = 14))
 
         // Continue watching.
@@ -709,6 +723,17 @@ class MainActivity : Activity() {
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
+        if (previewPane != null) resumePreview = {
+            val url = prefs.getString("last_live_url", null)
+            val item = visible.firstOrNull { it.url == url } ?: selected
+            if (item != null) {
+                selected = item
+                previewPane.show(item, visible, force = true)
+                adapter.notifyDataSetChanged()
+                val pos = visible.indexOfFirst { sameItem(it, item) }
+                if (pos >= 0) collection.setSelection(pos)
+            }
+        }
         previewPane?.onWatch = { item -> openItem(item, visible) { browse(kind, data, title, guide, active, onBack) } }
         details?.onOpen = { item -> openItem(item, visible) { browse(kind, data, title, guide, active, onBack) } }
         render()
@@ -944,13 +969,13 @@ class MainActivity : Activity() {
             view.addView(View(this@MainActivity).apply { setBackgroundColor(C.line) }, lp(-1, dp(1), t = 14))
             view.addView(ScrollView(this@MainActivity).apply { addView(upcoming) }, lp(-1, 0, 1f, t = 6))
         }
-        fun show(item: MediaItem, siblings: List<MediaItem>?, restartVideo: Boolean = true) {
+        fun show(item: MediaItem, siblings: List<MediaItem>?, restartVideo: Boolean = true, force: Boolean = false) {
             val changed = current?.let { sameItem(it, item) } != true
             current = item
             chName.text = item.name
             catchupBtn.visibility = if (item.catchup && profile?.type == "xtream") View.VISIBLE else View.GONE
             ((favBtn.getChildAt(0)) as TextView).text = if (isFavourite(item)) "Remove favourite" else "Add to favourites"
-            if (!changed) return
+            if (!changed && !force) return
             nowLabel.text = ""; nowTitle.text = item.name; nowDesc.text = item.category; upcoming.removeAllViews()
             loadGuide(item)
             if (restartVideo) {
@@ -958,7 +983,7 @@ class MainActivity : Activity() {
                 preview?.stop()
                 val restricted = prefs.getString("pin", null) != null && isRestricted(item)
                 hint.text = if (restricted) "Protected by parental PIN" else "Video preview · press OK for full screen"
-                if (!restricted) pending = Runnable { startPreview(item) }.also { main.postDelayed(it, 650) }
+                if (!restricted) pending = Runnable { startPreview(item) }.also { main.postDelayed(it, if (force) 900L else 650L) }
             }
         }
         private fun startPreview(item: MediaItem) {
@@ -1107,13 +1132,15 @@ class MainActivity : Activity() {
 
     private fun itemMenu(item: MediaItem, siblings: List<MediaItem>) {
         val actions = mutableListOf(if (isFavourite(item)) "Remove from favourites" else "Add to favourites")
-        if (item.kind == "live") { actions.add(0, "Watch"); if (profile?.type == "xtream") actions.add("Programme guide"); if (item.catchup && profile?.type == "xtream") actions.add("Catch-up / replay") }
-        else actions.add(0, if (item.kind == "series") "Episodes" else "Play")
+        if (item.kind == "live") { actions.add(0, "Watch"); actions.add("Record"); if (profile?.type == "xtream") actions.add("Programme guide"); if (item.catchup && profile?.type == "xtream") actions.add("Catch-up / replay") }
+        else { actions.add(0, if (item.kind == "series") "Episodes" else "Play"); if (item.kind != "series") actions.add("Download") }
         AlertDialog.Builder(this).setTitle(item.name).setItems(actions.toTypedArray()) { _, which ->
             when (actions[which]) {
                 "Watch", "Play", "Episodes" -> openItem(item, siblings) { home() }
                 "Programme guide" -> withPin(item) { showEpg(item, siblings) }
                 "Catch-up / replay" -> withPin(item) { catchup(item) }
+                "Record" -> recordLive(item)
+                "Download" -> { RecordingService.start(this, item.url, item.name, 0); toast("Download started · see Recordings") }
                 else -> { toggleFavourite(item); refreshList?.invoke(); toast(if (isFavourite(item)) "Added to favourites" else "Removed from favourites") }
             }
         }.show()
@@ -1239,6 +1266,72 @@ class MainActivity : Activity() {
                     .setPositiveButton("OK", null).show()
             }
         }.show()
+    }
+
+    private fun recordLive(item: MediaItem) {
+        val url = if (item.url.endsWith(".m3u8") && item.url.contains("/live/")) item.url.removeSuffix(".m3u8") + ".ts" else item.url
+        if (url.substringBefore('?').endsWith(".m3u8")) { toast("This channel's stream type can't be recorded"); return }
+        val mins = intArrayOf(30, 60, 120, 180)
+        AlertDialog.Builder(this).setTitle("Record ${item.name}").setItems(arrayOf("30 minutes", "1 hour", "2 hours", "3 hours")) { _, which ->
+            stopPreview()
+            RecordingService.start(this, url, item.name, mins[which]); toast("Recording started · see Recordings")
+        }.setNegativeButton("Cancel", null).show()
+    }
+
+    /** Recorded channels and downloaded films, stored in the app's own folder. */
+    private fun recordings() {
+        val content = shell("recordings")
+        back = { home() }
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(if (medium) 28 else 14), dp(20), dp(if (medium) 28 else 14), 0) }
+        content.addView(page, lp(-1, -1))
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(iconButton(R.drawable.ic_back, "Back", 44, C.panel2) { home() })
+        head.addView(text("Recordings", 24f, C.text, 800).apply { setPadding(dp(12), 0, 0, 0) }, lp(0, -2, 1f))
+        page.addView(head)
+        page.addView(text("Record a channel from the player (the ● button) or by long-pressing a channel. Films and episodes can be downloaded the same way. Recording uses one extra connection of your account.", 13f, C.muted, 400, 3).apply { setPadding(0, dp(12), 0, dp(12)) })
+        val dir = RecordingService.dir(this)
+        var files = listOf<java.io.File>()
+        val sizeFmt = { b: Long -> if (b > 1024L * 1024 * 1024) "%.1f GB".format(b / 1073741824.0) else "${b / 1048576} MB" }
+        val adapter = object : BaseAdapter() {
+            override fun getCount() = files.size
+            override fun getItem(position: Int) = files[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+                val f = files[position]
+                val row = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(10)); background = shape(C.panel, 14, C.border) }
+                val active = RecordingService.isRecording(f)
+                row.addView(icon(if (active) R.drawable.ic_record else R.drawable.ic_play, if (active) C.red else C.text, 22))
+                val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
+                col.addView(text(f.nameWithoutExtension, 15f, C.text, 600))
+                col.addView(text((if (active) "● Recording · " else "") + sizeFmt(f.length()) + " · " + dayFmt.format(Date(f.lastModified())) + " " + timeFmt.format(Date(f.lastModified())), 12f, if (active) C.orange else C.muted).apply { setPadding(0, dp(4), 0, 0) })
+                row.addView(col, lp(0, -2, 1f))
+                return row
+            }
+        }
+        val list = ListView(this).apply { divider = null; dividerHeight = dp(8); this.adapter = adapter; selector = shape(Color.argb(60, 47, 123, 255), 14) }
+        val empty = text("No recordings yet", 15f, C.muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(40), 0, 0) }
+        page.addView(empty, lp(-1, -2))
+        page.addView(list, lp(-1, 0, 1f))
+        fun reload() {
+            files = (dir.listFiles()?.filter { it.isFile } ?: emptyList()).sortedByDescending { it.lastModified() }
+            empty.visibility = if (files.isEmpty()) View.VISIBLE else View.GONE
+            adapter.notifyDataSetChanged()
+        }
+        reload()
+        val ticker = object : Runnable { override fun run() { if (list.isAttachedToWindow) { reload(); main.postDelayed(this, 3000) } } }
+        main.postDelayed(ticker, 3000)
+        list.setOnItemClickListener { _, _, position, _ ->
+            val f = files.getOrNull(position) ?: return@setOnItemClickListener
+            startPlayer(android.net.Uri.fromFile(f).toString(), f.nameWithoutExtension, live = false)
+        }
+        list.setOnItemLongClickListener { _, _, position, _ ->
+            val f = files.getOrNull(position) ?: return@setOnItemLongClickListener true
+            val job = RecordingService.jobs.values.firstOrNull { it.file == f }
+            val b = AlertDialog.Builder(this).setTitle(f.nameWithoutExtension)
+            if (job != null) b.setPositiveButton("Stop recording") { _, _ -> RecordingService.stop(this, job.id); toast("Stopping…") }
+            else b.setPositiveButton("Delete") { _, _ -> f.delete(); reload() }
+            b.setNegativeButton("Cancel", null).show(); true
+        }
     }
 
     private fun networkSafety() {
