@@ -1,4 +1,3 @@
-
 name: YepPlayer Android APK
 
 on:
@@ -6,6 +5,7 @@ on:
   push:
     branches:
       - main
+  pull_request:
 
 jobs:
   build:
@@ -25,24 +25,52 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Check Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          ls "$ANDROID_HOME"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
+      - name: Restore signing key
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.YEP_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/yepplayer-release.jks"
+            echo "file=$RUNNER_TEMP/yepplayer-release.jks" >> "$GITHUB_OUTPUT"
+          else
+            echo "No signing key secret: building the debug APK only."
+          fi
+
+      - name: Build signed release APK
+        if: steps.key.outputs.file != ''
+        env:
+          YEP_KEYSTORE_FILE: ${{ steps.key.outputs.file }}
+          YEP_KEYSTORE_PASSWORD: ${{ secrets.YEP_KEYSTORE_PASSWORD }}
+          YEP_KEY_ALIAS: ${{ secrets.YEP_KEY_ALIAS }}
+          YEP_KEY_PASSWORD: ${{ secrets.YEP_KEY_PASSWORD }}
+        run: |
+          gradle --no-daemon :app:assembleRelease
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/YepPlayer-release.apk
+          "$ANDROID_HOME"/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner verify --print-certs dist/YepPlayer-release.apk | head -5
+
       - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
+        if: steps.key.outputs.file == ''
+        run: |
+          # Also builds the optimised release variant (unsigned) so shrinking problems show up early.
+          gradle --no-daemon :app:assembleDebug :app:assembleRelease
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/YepPlayer-debug.apk
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/yepplayer-release.jks"
 
       - name: Upload YepPlayer APK
         uses: actions/upload-artifact@v4
         with:
           name: YepPlayer-Android-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: dist/*.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
