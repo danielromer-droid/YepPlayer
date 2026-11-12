@@ -47,25 +47,6 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import androidx.media3.common.MediaItem as ExoItem
 
-/** Colours of the TV-style design. */
-private object C {
-    val bg = Color.rgb(11, 15, 23)
-    val rail = Color.rgb(15, 21, 32)
-    val panel = Color.rgb(20, 27, 38)
-    val panel2 = Color.rgb(28, 39, 56)
-    val border = Color.rgb(37, 48, 66)
-    val line = Color.rgb(30, 39, 53)
-    val accent = Color.rgb(47, 123, 255)
-    val accentSoft = Color.rgb(230, 240, 255)
-    val orange = Color.rgb(255, 159, 67)
-    val gold = Color.rgb(255, 194, 61)
-    val red = Color.rgb(229, 72, 77)
-    val text = Color.rgb(242, 245, 250)
-    val text2 = Color.rgb(201, 211, 225)
-    val muted = Color.rgb(154, 168, 188)
-    val faint = Color.rgb(111, 126, 148)
-}
-
 @OptIn(UnstableApi::class)
 class MainActivity : Activity() {
     private val pool = Executors.newSingleThreadExecutor()
@@ -99,6 +80,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        C.load(prefs)
         window.statusBarColor = C.rail
         window.navigationBarColor = C.rail
         NetGuard.load(prefs); NetGuard.fileRoot = RecordingService.dir(this).canonicalPath
@@ -165,8 +147,8 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
         setPadding(dp(18), 0, dp(18), 0)
         background = if (primary) focusable(C.accent, 22, null, null).also { } else focusable(C.panel, 22, C.border)
-        if (iconRes != null) addView(icon(iconRes, Color.WHITE, 16).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8) })
-        addView(text(label, 14f, if (primary) Color.WHITE else C.text, if (primary) 700 else 600))
+        if (iconRes != null) addView(icon(iconRes, if (primary) C.onAccent else C.text, 16).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(8) })
+        addView(text(label, 14f, if (primary) C.onAccent else C.text, if (primary) 700 else 600))
         layoutParams = LinearLayout.LayoutParams(-2, dp(44))
         clickable(this, onClick)
     }
@@ -203,6 +185,7 @@ class MainActivity : Activity() {
     /** Side rail + content area. Returns the content container. */
     private fun shell(active: String): LinearLayout {
         stopPreview()
+        window.statusBarColor = C.rail; window.navigationBarColor = C.rail
         refreshList = null
         resumePreview = null
         clockTick?.let { main.removeCallbacks(it) }; clockTick = null
@@ -211,9 +194,9 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
             setBackgroundColor(C.rail); setPadding(0, dp(18), 0, dp(14))
         }
-        val mark = FrameLayout(this).apply { background = shape(C.accent, 12) }
-        mark.addView(icon(R.drawable.ic_play, Color.WHITE, 20), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
-        rail.addView(mark, lp(dp(42), dp(42), b = 18))
+        val mark = ImageView(this).apply { setImageResource(R.drawable.yep_logo); contentDescription = "YepPlayer"; scaleType = ImageView.ScaleType.FIT_CENTER }
+        clickable(mark) { home() }
+        rail.addView(mark, lp(dp(if (medium) 56 else 48), dp(if (medium) 56 else 48), b = 14))
         val railItems = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
         var target = railItems
         fun item(res: Int, key: String, desc: String, go: () -> Unit) {
@@ -232,6 +215,7 @@ class MainActivity : Activity() {
         item(R.drawable.ic_series, "series", "Series") { load("series") }
         item(R.drawable.ic_guide, "guide", "TV guide") { load("live", guide = true) }
         item(R.drawable.ic_star, "favs", "Favourites") { browse("favs", favourites(), "Favourites") }
+        item(R.drawable.ic_sport, "sports", "Sports") { sports() }
         item(R.drawable.ic_record, "recordings", "Recordings") { recordings() }
         rail.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(railItems) }, lp(-2, 0, 1f))
         target = rail
@@ -295,10 +279,10 @@ class MainActivity : Activity() {
                 background = if (primary) focusable(C.accent, 22, null) else focusable(C.panel, 22, C.border)
                 setPadding(dp(if (medium) 24 else 14), dp(20), dp(14), dp(18))
             }
-            t.addView(icon(res, if (primary) Color.WHITE else C.orange, if (medium) 40 else 30))
+            t.addView(icon(res, if (primary) C.onAccent else C.highlight, if (medium) 40 else 30))
             t.addView(View(this), lp(1, 0, 1f))
-            t.addView(text(title, if (medium) 28f else 19f, if (primary) Color.WHITE else C.text, 800))
-            t.addView(text(sub, 13f, if (primary) C.accentSoft else C.muted).apply { setPadding(0, dp(6), 0, 0) })
+            t.addView(text(title, if (medium) 28f else 19f, if (primary) C.onAccent else C.text, 800))
+            t.addView(text(sub, 13f, if (primary) C.onAccent else C.muted).apply { setPadding(0, dp(6), 0, 0) })
             clickable(t, go)
             tiles.addView(t, lp(0, -1, weight, r = 8, l = 8))
         }
@@ -314,7 +298,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 background = focusable(C.panel, 16, C.border); setPadding(dp(18), 0, dp(12), 0)
             }
-            s.addView(icon(res, Color.rgb(125, 184, 255), 22))
+            s.addView(icon(res, C.soft, 22))
             s.addView(text(label, 15f, C.text, 600).apply { setPadding(dp(12), 0, 0, 0) })
             clickable(s, go)
             shortcuts.add(s, dp(60))
@@ -362,7 +346,7 @@ class MainActivity : Activity() {
         card.addView(thumb, lp(-1, dp(84)))
         val prog = FrameLayout(this).apply { setBackgroundColor(C.border) }
         val frac = progressOf(item)
-        prog.addView(View(this).apply { setBackgroundColor(C.orange) }, FrameLayout.LayoutParams((dp(210) * frac).toInt(), -1))
+        prog.addView(View(this).apply { setBackgroundColor(C.highlight) }, FrameLayout.LayoutParams((dp(210) * frac).toInt(), -1))
         card.addView(prog, lp(-1, dp(4)))
         val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(12)) }
         info.addView(text(item.name, 14f, C.text, 600))
@@ -450,7 +434,7 @@ class MainActivity : Activity() {
             inputType = if (password) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
         }
         val card1 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = shape(C.panel, 20, C.border); setPadding(dp(20), dp(18), dp(20), dp(20)) }
-        card1.addView(text("XTREAM CODES", 12f, Color.rgb(125, 184, 255), 800).apply { letterSpacing = 0.1f })
+        card1.addView(text("XTREAM CODES", 12f, C.soft, 800).apply { letterSpacing = 0.1f })
         val server = field("Server URL, e.g. http://provider.com:8080", current?.takeIf { it.type == "xtream" }?.base ?: "")
         val user = field("Username", current?.takeIf { it.type == "xtream" }?.username ?: "")
         val pass = field(if (current?.type == "xtream") "Password (leave empty to keep current)" else "Password", "", true)
@@ -477,7 +461,7 @@ class MainActivity : Activity() {
         c.addView(card1, lp(-1, -2, t = 18))
 
         val card2 = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = shape(C.panel, 20, C.border); setPadding(dp(20), dp(18), dp(20), dp(20)) }
-        card2.addView(text("M3U PLAYLIST", 12f, Color.rgb(125, 184, 255), 800).apply { letterSpacing = 0.1f })
+        card2.addView(text("M3U PLAYLIST", 12f, C.soft, 800).apply { letterSpacing = 0.1f })
         val m3u = field("https://example.com/playlist.m3u", current?.takeIf { it.type == "m3u" }?.base ?: "")
         card2.addView(m3u, lp(-1, dp(50), t = 12))
         card2.addView(pill("Save M3U URL", true) {
@@ -580,8 +564,8 @@ class MainActivity : Activity() {
                     layoutParams = AbsListView.LayoutParams(-1, dp(46))
                 }
                 val g = groups[position]; val on = position == groupIndex
-                (v.getChildAt(0) as TextView).apply { text = g.name; setTextColor(if (on) Color.WHITE else C.text2) }
-                (v.getChildAt(1) as TextView).apply { text = "%,d".format(g.count); setTextColor(if (on) C.accentSoft else C.faint) }
+                (v.getChildAt(0) as TextView).apply { text = g.name; setTextColor(if (on) C.onAccent else C.text2) }
+                (v.getChildAt(1) as TextView).apply { text = "%,d".format(g.count); setTextColor(if (on) C.onAccent else C.faint) }
                 v.background = shape(if (on) C.accent else Color.TRANSPARENT, 12)
                 return v
             }
@@ -596,7 +580,7 @@ class MainActivity : Activity() {
             head.addView(iconButton(R.drawable.ic_back, "Back", 44, C.panel2) { onBack() })
             head.addView(text(title, 21f, C.text, 800).apply { setPadding(dp(10), 0, 0, 0) }, lp(0, -2, 1f))
             gp.addView(head)
-            val gl = ListView(this).apply { divider = null; dividerHeight = dp(4); adapter = groupAdapter; selector = shape(Color.argb(60, 47, 123, 255), 12); isVerticalScrollBarEnabled = false }
+            val gl = ListView(this).apply { divider = null; dividerHeight = dp(4); adapter = groupAdapter; selector = shape(C.accentTint, 12); isVerticalScrollBarEnabled = false }
             gp.addView(gl, lp(-1, 0, 1f))
             if (kind in setOf("live", "vod", "series")) gp.addView(pill("Manage groups") { manageGroups(data, kind) { browse(kind, data, title, guide, active, onBack) } }, lp(-1, dp(44), t = 8))
             row.addView(gp, LinearLayout.LayoutParams(dp(if (wide) 250 else 210), -1))
@@ -671,7 +655,7 @@ class MainActivity : Activity() {
             adapter = RowAdapter(kind, mixed) { visible to selected }
             collection = ListView(this).apply {
                 divider = null; dividerHeight = dp(4); this.adapter = adapter; isFastScrollEnabled = true
-                selector = shape(Color.argb(60, 47, 123, 255), 12); clipToPadding = false; setPadding(0, 0, 0, dp(16))
+                selector = shape(C.accentTint, 12); clipToPadding = false; setPadding(0, 0, 0, dp(16))
             }
         }
         mainPane.addView(collection, lp(-1, 0, 1f))
@@ -754,7 +738,7 @@ class MainActivity : Activity() {
         val name = text("", 15f, C.text, 600)
         val now = text("", 12f, C.muted)
         val progress = FrameLayout(this@MainActivity).apply { background = shape(C.border, 2) }
-        val bar = View(this@MainActivity).apply { background = shape(C.orange, 2) }
+        val bar = View(this@MainActivity).apply { background = shape(C.highlight, 2) }
         val star = icon(R.drawable.ic_star_filled, C.gold, 18)
         val replay = icon(R.drawable.ic_replay, C.muted, 16)
         init {
@@ -842,7 +826,7 @@ class MainActivity : Activity() {
         val img = ImageView(this@MainActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; clipToOutline = true; background = shape(C.panel2, 12) }
         val placeholder = text("", 12f, C.faint, 600, 3).apply { gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), 0) }
         val rating = badge("", C.bg, C.gold)
-        val bar = View(this@MainActivity).apply { setBackgroundColor(C.orange) }
+        val bar = View(this@MainActivity).apply { setBackgroundColor(C.highlight) }
         val title = text("", 13f, C.text, 600)
         init {
             frame.addView(placeholder, FrameLayout.LayoutParams(-1, -1))
@@ -940,7 +924,7 @@ class MainActivity : Activity() {
         private val playerView = PlayerView(this@MainActivity).apply { useController = false; setShutterBackgroundColor(Color.rgb(5, 7, 11)) }
         private val hint = text("Video preview · press OK for full screen", 13f, C.faint).apply { gravity = Gravity.CENTER }
         private val chName = text("", 15f, C.text, 700)
-        private val nowLabel = text("", 11f, C.orange, 800).apply { letterSpacing = 0.08f }
+        private val nowLabel = text("", 11f, C.highlight, 800).apply { letterSpacing = 0.08f }
         private val nowTitle = text("", 20f, C.text, 700, 2)
         private val nowDesc = text("", 13f, C.muted, 400, 2).apply { setLineSpacing(0f, 1.25f) }
         private val catchupBtn: LinearLayout
@@ -1251,7 +1235,7 @@ class MainActivity : Activity() {
     }
 
     private fun settings() {
-        val options = arrayOf("Playlists", "Account information", "Hide / show live TV groups", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "About YepPlayer")
+        val options = arrayOf("Playlists", "Account information", "Hide / show live TV groups", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "Colours", "About YepPlayer")
         AlertDialog.Builder(this).setTitle("Settings").setItems(options) { _, which ->
             when (which) {
                 0 -> configure()
@@ -1260,6 +1244,7 @@ class MainActivity : Activity() {
                 3 -> changePin()
                 4 -> browse("recent", recent(), "Recently watched")
                 6 -> networkSafety()
+                7 -> colours()
                 5 -> { cache.clear(); nowCache.clear(); detailsCache.clear(); logoCache.evictAll(); synchronized(failedLogos) { failedLogos.clear() }; prefs.edit().remove("acct_time|${profile?.base}").apply(); toast("Playlist data will reload") }
                 else -> AlertDialog.Builder(this).setTitle("YepPlayer ${packageManager.getPackageInfo(packageName, 0).versionName}")
                     .setMessage("A personal IPTV player for authorised playlists.\n\nTips: long-press an item for more options. In the player, use the channel buttons (or the remote's up/down keys) to zap between channels.")
@@ -1303,12 +1288,12 @@ class MainActivity : Activity() {
                 row.addView(icon(if (active) R.drawable.ic_record else R.drawable.ic_play, if (active) C.red else C.text, 22))
                 val col = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
                 col.addView(text(f.nameWithoutExtension, 15f, C.text, 600))
-                col.addView(text((if (active) "● Recording · " else "") + sizeFmt(f.length()) + " · " + dayFmt.format(Date(f.lastModified())) + " " + timeFmt.format(Date(f.lastModified())), 12f, if (active) C.orange else C.muted).apply { setPadding(0, dp(4), 0, 0) })
+                col.addView(text((if (active) "● Recording · " else "") + sizeFmt(f.length()) + " · " + dayFmt.format(Date(f.lastModified())) + " " + timeFmt.format(Date(f.lastModified())), 12f, if (active) C.highlight else C.muted).apply { setPadding(0, dp(4), 0, 0) })
                 row.addView(col, lp(0, -2, 1f))
                 return row
             }
         }
-        val list = ListView(this).apply { divider = null; dividerHeight = dp(8); this.adapter = adapter; selector = shape(Color.argb(60, 47, 123, 255), 14) }
+        val list = ListView(this).apply { divider = null; dividerHeight = dp(8); this.adapter = adapter; selector = shape(C.accentTint, 14) }
         val empty = text("No recordings yet", 15f, C.muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(40), 0, 0) }
         page.addView(empty, lp(-1, -2))
         page.addView(list, lp(-1, 0, 1f))
@@ -1331,6 +1316,242 @@ class MainActivity : Activity() {
             if (job != null) b.setPositiveButton("Stop recording") { _, _ -> RecordingService.stop(this, job.id); toast("Stopping…") }
             else b.setPositiveButton("Delete") { _, _ -> f.delete(); reload() }
             b.setNegativeButton("Cancel", null).show(); true
+        }
+    }
+
+    // ---------------------------------------------------------------- colours
+
+    private fun colours() {
+        val content = shell("settings")
+        back = { home() }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        content.addView(row, lp(-1, -1))
+        val scroll = ScrollView(this)
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(if (medium) 32 else 16), dp(24), dp(if (medium) 24 else 16), dp(24)) }
+        scroll.addView(col)
+        row.addView(scroll, lp(if (medium) dp(520) else -1, -1))
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(iconButton(R.drawable.ic_back, "Back", 44, C.panel2) { home() })
+        head.addView(text("Colours", 26f, C.text, 800).apply { setPadding(dp(12), 0, 0, 0) })
+        col.addView(head)
+        col.addView(text("Choose how YepPlayer looks. Changes apply straight away.", 14f, C.muted, 400, 2).apply { setPadding(0, dp(8), 0, 0) })
+        fun section(label: String) = col.addView(text(label, 12f, C.soft, 800).apply { letterSpacing = 0.1f; setPadding(0, dp(22), 0, dp(10)) })
+        fun apply(theme: Int = C.themeIndex, accent: Int = C.accentIndex, bg: Int = C.backdropIndex) { C.save(prefs, theme, accent, bg); colours() }
+        fun dot(color: Int, size: Int) = View(this).apply { background = shape(color, size / 2, C.border); layoutParams = LinearLayout.LayoutParams(dp(size), dp(size)).apply { rightMargin = dp(6) } }
+
+        section("THEME")
+        val grid = GridLayoutCompat(if (medium) 3 else 2)
+        C.presets.forEachIndexed { i, t ->
+            val on = C.themeIndex == i && C.accentIndex < 0
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(12), dp(12), dp(12))
+                background = focusable(C.panel, 16, C.border)
+            }
+            if (on) tile.background = StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), shape(C.panel2, 16, C.text, 2))
+                addState(intArrayOf(), shape(C.panel, 16, t.accent, 2))
+            }
+            val sw = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            sw.addView(dot(t.accent, 22)); sw.addView(dot(C.panel2, 22)); sw.addView(dot(t.highlight, 22))
+            tile.addView(sw); tile.addView(View(this), lp(1, 0, 1f))
+            tile.addView(text(t.name, 14f, C.text, 700))
+            clickable(tile) { apply(theme = i, accent = -1) }
+            grid.add(tile, dp(88))
+        }
+        col.addView(grid.view)
+
+        section("OR PICK YOUR OWN MAIN COLOUR")
+        val accRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        C.accents.forEachIndexed { i, a ->
+            val on = C.accentIndex == i
+            val b = FrameLayout(this).apply {
+                contentDescription = a.name
+                background = StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_focused), shape(a.color, 24, C.text, 3))
+                    addState(intArrayOf(), shape(a.color, 24, if (on) C.text else null, 3))
+                }
+            }
+            clickable(b) { apply(accent = i) }
+            accRow.addView(b, lp(dp(48), dp(48), r = 12))
+        }
+        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(accRow) })
+
+        section("BACKGROUND")
+        val bgRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        C.backdrops.forEachIndexed { i, b ->
+            val on = C.backdropIndex == i
+            val pill = LinearLayout(this).apply {
+                gravity = Gravity.CENTER; setPadding(dp(18), 0, dp(18), 0)
+                background = StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_focused), shape(b.panel, 22, C.text, 2))
+                    addState(intArrayOf(), shape(b.panel, 22, if (on) C.accent else b.border, if (on) 2 else 1))
+                }
+                addView(text(b.name, 14f, C.text, 600))
+            }
+            clickable(pill) { apply(bg = i) }
+            bgRow.addView(pill, lp(-2, dp(46), r = 12))
+        }
+        col.addView(bgRow)
+        col.addView(pill("Reset to YepPlayer colours") { apply(0, -1, 0) }, lp(-2, dp(44), t = 26))
+
+        if (medium) {
+            val pv = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(24), dp(28), dp(24)) }
+            pv.addView(text("PREVIEW", 12f, C.soft, 800).apply { letterSpacing = 0.1f })
+            val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = shape(C.bg, 20, C.border); setPadding(dp(20), dp(20), dp(20), dp(20)) }
+            card.addView(text(SpannableStringBuilder("YepPlayer").apply { setSpan(ForegroundColorSpan(C.accent), 0, 3, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }, 24f, C.text, 800))
+            val tiles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            fun tile(title: String, sub: String, primary: Boolean) = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(dp(16), dp(14), dp(14), dp(14))
+                background = shape(if (primary) C.accent else C.panel, 18, if (primary) null else C.border)
+                addView(text(title, 22f, if (primary) C.onAccent else C.text, 800))
+                addView(text(sub, 13f, if (primary) C.onAccent else C.muted, 600))
+            }
+            tiles.addView(tile("Live TV", "Channels & groups", true), lp(0, dp(130), 1.3f, r = 6))
+            tiles.addView(tile("Movies", "Your film library", false), lp(0, dp(130), 1f, l = 6))
+            card.addView(tiles, lp(-1, -2, t = 14))
+            val ch = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; background = shape(C.panel2, 12, C.accent, 2); setPadding(dp(12), 0, dp(12), 0) }
+            ch.addView(View(this).apply { background = shape(C.panel, 9) }, lp(dp(38), dp(38)))
+            val chCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
+            chCol.addView(text("Sample Sport 1", 14f, C.text, 600))
+            val track = FrameLayout(this).apply { background = shape(C.border, 2) }
+            track.addView(View(this).apply { background = shape(C.highlight, 2) }, FrameLayout.LayoutParams(dp(120), -1))
+            chCol.addView(track, lp(-1, dp(3), t = 6))
+            ch.addView(chCol, lp(0, -2, 1f))
+            ch.addView(text("NOW", 11f, C.highlight, 800))
+            card.addView(ch, lp(-1, dp(58), t = 14))
+            val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            btns.addView(pill("Watch", true, R.drawable.ic_play) {}); btns.addView(pill("Catch-up") {}, lp(-2, dp(44), l = 10))
+            card.addView(btns, lp(-2, -2, t = 14))
+            pv.addView(card, lp(-1, -2, t = 12))
+            row.addView(pv, lp(0, -1, 1f))
+        }
+    }
+
+    // ---------------------------------------------------------------- sports
+
+    private fun mySports(): Set<String> = prefs.getStringSet("my_sports", emptySet()) ?: emptySet()
+
+    private fun sports(selectedSport: String = "All", force: Boolean = false) {
+        val p = profile ?: run { configure(); return }
+        if (p.type != "xtream") { toast("Sports needs an Xtream account with a TV guide"); return }
+        val content = shell("sports")
+        back = { home() }
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(if (medium) 28 else 14), dp(20), dp(if (medium) 28 else 14), 0) }
+        content.addView(page, lp(-1, -1))
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(iconButton(R.drawable.ic_back, "Back", 44, C.panel2) { home() })
+        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
+        titles.addView(text("Sports", 26f, C.text, 800))
+        if (medium) titles.addView(text("Live and upcoming sport on your channels, from the TV guide", 13f, C.muted).apply { setPadding(0, dp(4), 0, 0) })
+        head.addView(titles, lp(0, -2, 1f))
+        head.addView(pill("My sports") {
+            val all = Sports.names.toTypedArray(); val mine = mySports().toMutableSet()
+            AlertDialog.Builder(this).setTitle("My sports").setMultiChoiceItems(all, BooleanArray(all.size) { all[it] in mine }) { _, w, on -> if (on) mine.add(all[w]) else mine.remove(all[w]) }
+                .setPositiveButton("Save") { _, _ -> prefs.edit().putStringSet("my_sports", mine).apply(); sports(selectedSport) }
+                .setNegativeButton("Cancel", null).show()
+        })
+        head.addView(iconButton(R.drawable.ic_replay, "Refresh") { sports(selectedSport, force = true) }, lp(dp(44), dp(44), l = 10))
+        page.addView(head)
+
+        val mine = mySports()
+        val order = listOf("All") + (if (mine.isNotEmpty()) listOf("My sports") else emptyList()) + Sports.names.sortedBy { if (it in mine) 0 else 1 }
+        val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        order.forEach { s ->
+            val on = s == selectedSport
+            val chip = LinearLayout(this).apply {
+                gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), 0)
+                background = if (on) focusable(C.accent, 21, null) else focusable(C.panel, 21, C.border)
+                addView(text(s, 14f, if (on) C.onAccent else C.text, 700))
+            }
+            clickable(chip) { sports(s) }
+            chips.addView(chip, lp(-2, dp(42), r = 10))
+        }
+        page.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) }, lp(-1, -2, t = 16, b = 12))
+
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        body.addView(ProgressBar(this).apply { isIndeterminate = true; indeterminateTintList = ColorStateList.valueOf(C.accent) }, lp(dp(44), dp(44), t = 40))
+        body.addView(text("Searching the TV guide for sport…", 14f, C.muted).apply { setPadding(0, dp(12), 0, 0) })
+        page.addView(body, lp(-1, 0, 1f))
+
+        pool.execute {
+            try {
+                val channels = cache["live"] ?: Source.load(p, "live").also { l -> runOnUiThread { cache["live"] = l } }
+                val events = Sports.load(p, channels, force)
+                runOnUiThread { if (body.isAttachedToWindow) showSports(body, events, selectedSport, mine) }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    body.removeAllViews()
+                    body.addView(text(e.message ?: "TV guide unavailable", 14f, C.muted, 400, 3).apply { gravity = Gravity.CENTER; setPadding(0, dp(40), 0, dp(14)) })
+                    body.addView(pill("Try again", true) { sports(selectedSport, true) })
+                }
+            }
+        }
+    }
+
+    private fun showSports(body: LinearLayout, all: List<SportEvent>, selected: String, mine: Set<String>) {
+        body.removeAllViews(); body.gravity = Gravity.NO_GRAVITY
+        val now = System.currentTimeMillis() / 1000
+        val events = all.filter { it.stop > now && when (selected) { "All" -> true; "My sports" -> it.sport in mine; else -> it.sport == selected } }
+        val live = events.filter { it.isLive(now) }.take(80)
+        val next = events.filter { it.start > now }.take(80)
+        val liveChannels = live.map { it.channel }.distinctBy { it.id }
+        fun liveCard(e: SportEvent): View {
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); background = focusable(C.panel, 14, C.border) }
+            val logo = FrameLayout(this).apply { background = shape(C.panel2, 10) }
+            logo.addView(text(initialsOf(e.channel.name), 11f, C.muted, 800).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, -1))
+            val img = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; setPadding(dp(4), dp(4), dp(4), dp(4)); tag = e.channel.logoUrl }
+            logo.addView(img, FrameLayout.LayoutParams(-1, -1)); if (e.channel.logoUrl.isNotBlank()) loadLogo(e.channel.logoUrl, img)
+            r.addView(logo, lp(dp(46), dp(46)))
+            val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(10), 0) }
+            val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            top.addView(text(e.sport.uppercase(), 11f, C.accent, 800).apply { letterSpacing = 0.06f })
+            top.addView(text(e.channel.name, 12f, C.muted).apply { setPadding(dp(8), 0, 0, 0) })
+            c.addView(top); c.addView(text(e.title, 15f, C.text, 700), lp(-1, -2, t = 4))
+            val track = FrameLayout(this).apply { background = shape(C.border, 2) }
+            val frac = ((now - e.start).toFloat() / (e.stop - e.start)).coerceIn(0f, 1f)
+            val bar = View(this).apply { background = shape(C.highlight, 2) }
+            track.addView(bar, FrameLayout.LayoutParams(0, -1)); track.post { bar.layoutParams = FrameLayout.LayoutParams((track.width * frac).toInt(), -1) }
+            c.addView(track, lp(-1, dp(3), t = 6))
+            r.addView(c, lp(0, -2, 1f))
+            r.addView(pill("Watch", true) { withPin(e.channel) { playLive(e.channel, liveChannels) } })
+            clickable(r) { withPin(e.channel) { playLive(e.channel, liveChannels) } }
+            return r
+        }
+        fun nextRow(e: SportEvent): View {
+            val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(10), dp(12), dp(10)); background = focusable(Color.TRANSPARENT, 12, null) }
+            val day = if (dayFmt.format(Date(e.start * 1000)) == dayFmt.format(Date())) "" else dayFmt.format(Date(e.start * 1000)).substringBefore(' ') + " "
+            r.addView(text(day + timeFmt.format(Date(e.start * 1000)), 15f, C.text, 700), lp(dp(if (day.isEmpty()) 56 else 90), -2))
+            val c = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, 0, 0) }
+            c.addView(text(e.title, 14f, C.text, 600)); c.addView(text("${e.sport} · ${e.channel.name}", 12f, C.muted).apply { setPadding(0, dp(3), 0, 0) })
+            r.addView(c, lp(0, -2, 1f))
+            clickable(r) {
+                AlertDialog.Builder(this).setTitle(e.title)
+                    .setMessage("${e.sport} · ${e.channel.name}\n${dayFmt.format(Date(e.start * 1000))}  ${timeFmt.format(Date(e.start * 1000))}–${timeFmt.format(Date(e.stop * 1000))}")
+                    .setPositiveButton("Watch channel") { _, _ -> withPin(e.channel) { playLive(e.channel, listOf(e.channel)) } }
+                    .setNegativeButton("Close", null).show()
+            }
+            return r
+        }
+        fun header(label: String, liveBadge: Boolean, count: String) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(4), 0, dp(10))
+            if (liveBadge) addView(badge(label, C.red)) else addView(text(label, 13f, C.soft, 800).apply { letterSpacing = 0.08f })
+            addView(text(count, 13f, C.muted).apply { setPadding(dp(10), 0, 0, 0) })
+        }
+        val liveCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        liveCol.addView(header("LIVE NOW", true, if (live.isEmpty()) "Nothing live right now" else "${live.size} events"))
+        live.forEach { liveCol.addView(liveCard(it), lp(-1, -2, b = 8)) }
+        val nextCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        nextCol.addView(header("COMING UP", false, if (next.isEmpty()) "Nothing found in the guide" else ""))
+        next.forEach { nextCol.addView(nextRow(it)); nextCol.addView(View(this).apply { setBackgroundColor(C.line) }, lp(-1, 1)) }
+        if (all.isEmpty()) liveCol.addView(text("No sport found. Your provider's TV guide may not list these channels.", 13f, C.muted, 400, 3))
+        if (medium) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(ScrollView(this).apply { addView(liveCol) }, lp(0, -1, 1.15f, r = 12))
+            row.addView(ScrollView(this).apply { addView(nextCol) }, lp(0, -1, 1f, l = 12))
+            body.addView(row, lp(-1, -1))
+        } else {
+            val one = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(liveCol); addView(nextCol, lp(-1, -2, t = 16)) }
+            body.addView(ScrollView(this).apply { addView(one) }, lp(-1, -1))
         }
     }
 

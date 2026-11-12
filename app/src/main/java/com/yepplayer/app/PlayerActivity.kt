@@ -72,6 +72,7 @@ class PlayerActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        C.load(prefs)
         NetGuard.load(prefs); NetGuard.fileRoot = RecordingService.dir(this).canonicalPath
         val single = intent.getStringExtra("url") ?: run { finish(); return }
         urls = intent.getStringArrayExtra("urls") ?: arrayOf(single)
@@ -113,15 +114,15 @@ class PlayerActivity : Activity() {
         infoCard = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(18), dp(14), dp(18), dp(14))
-            background = GradientDrawable().apply { setColor(Color.argb(240, 15, 21, 32)); cornerRadius = dp(20).toFloat(); setStroke(dp(1), Color.rgb(37, 48, 66)) }
+            background = GradientDrawable().apply { setColor(Color.argb(240, Color.red(C.rail), Color.green(C.rail), Color.blue(C.rail))); cornerRadius = dp(20).toFloat(); setStroke(dp(1), C.border) }
             visibility = if (live) View.VISIBLE else View.GONE
         }
         if (urls.size > 1) infoCard.addView(roundIcon(R.drawable.ic_up, "Previous channel") { zap(-1) })
         val numBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            background = GradientDrawable().apply { setColor(Color.rgb(28, 39, 56)); cornerRadius = dp(14).toFloat() }
+            background = GradientDrawable().apply { setColor(C.panel2); cornerRadius = dp(14).toFloat() }
         }
-        infoNum = label("", 13f, Color.rgb(154, 168, 188), true)
+        infoNum = label("", 13f, C.muted, true)
         numBox.addView(infoNum)
         infoCard.addView(numBox, LinearLayout.LayoutParams(dp(64), dp(64)).apply { leftMargin = dp(14) })
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, dp(16), 0) }
@@ -134,21 +135,21 @@ class PlayerActivity : Activity() {
         }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(10) })
         col.addView(nameRow)
         val nowRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        nowRow.addView(label("NOW", 13f, Color.rgb(255, 159, 67), true))
+        nowRow.addView(label("NOW", 13f, C.highlight, true))
         nowTitle = label("", 14f, Color.WHITE, false)
         nowRow.addView(nowTitle, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(12) })
-        nowTime = label("", 13f, Color.rgb(154, 168, 188), false)
+        nowTime = label("", 13f, C.muted, false)
         nowRow.addView(nowTime)
         col.addView(nowRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        nowTrack = FrameLayout(this).apply { background = GradientDrawable().apply { setColor(Color.rgb(37, 48, 66)); cornerRadius = dp(3).toFloat() } }
-        nowBar = View(this).apply { background = GradientDrawable().apply { setColor(Color.rgb(255, 159, 67)); cornerRadius = dp(3).toFloat() } }
+        nowTrack = FrameLayout(this).apply { background = GradientDrawable().apply { setColor(C.border); cornerRadius = dp(3).toFloat() } }
+        nowBar = View(this).apply { background = GradientDrawable().apply { setColor(C.highlight); cornerRadius = dp(3).toFloat() } }
         nowTrack.addView(nowBar, FrameLayout.LayoutParams(0, -1))
         col.addView(nowTrack, LinearLayout.LayoutParams(-1, dp(5)).apply { topMargin = dp(8) })
         val nextRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        nextRow.addView(label("NEXT", 12f, Color.rgb(154, 168, 188), true))
-        nextTitle = label("", 13f, Color.rgb(154, 168, 188), false)
+        nextRow.addView(label("NEXT", 12f, C.muted, true))
+        nextTitle = label("", 13f, C.muted, false)
         nextRow.addView(nextTitle, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(12) })
-        nextTime = label("", 12f, Color.rgb(154, 168, 188), false)
+        nextTime = label("", 12f, C.muted, false)
         nextRow.addView(nextTime)
         col.addView(nextRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         infoCard.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
@@ -188,8 +189,8 @@ class PlayerActivity : Activity() {
     private fun roundIcon(res: Int, desc: String, onClick: () -> Unit) = FrameLayout(this).apply {
         contentDescription = desc
         background = android.graphics.drawable.StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(Color.rgb(28, 39, 56)); cornerRadius = dp(24).toFloat(); setStroke(dp(2), Color.rgb(47, 123, 255)) })
-            addState(intArrayOf(), GradientDrawable().apply { setColor(Color.argb(230, 28, 39, 56)); cornerRadius = dp(24).toFloat() })
+            addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(C.panel2); cornerRadius = dp(24).toFloat(); setStroke(dp(2), C.accent) })
+            addState(intArrayOf(), GradientDrawable().apply { setColor(Color.argb(230, Color.red(C.panel2), Color.green(C.panel2), Color.blue(C.panel2))); cornerRadius = dp(24).toFloat() })
         }
         addView(ImageView(this@PlayerActivity).apply { setImageResource(res); imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE) }, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
         layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(8) }
