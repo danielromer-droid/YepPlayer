@@ -72,6 +72,7 @@ class PlayerActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        NetGuard.load(prefs)
         val single = intent.getStringExtra("url") ?: run { finish(); return }
         urls = intent.getStringArrayExtra("urls") ?: arrayOf(single)
         names = intent.getStringArrayExtra("names") ?: arrayOf(intent.getStringExtra("name") ?: "YepPlayer")
@@ -246,7 +247,7 @@ class PlayerActivity : Activity() {
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(20000)
-        val sources = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http))
+        val sources = DefaultMediaSourceFactory(Source.guarded(DefaultDataSource.Factory(this, http)))
         return ExoPlayer.Builder(this).setMediaSourceFactory(sources).build().apply {
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
@@ -259,6 +260,14 @@ class PlayerActivity : Activity() {
     }
 
     private fun handleError(error: PlaybackException) {
+        var cause: Throwable? = error
+        while (cause != null && cause !is NetGuard.Blocked) cause = cause.cause
+        if (cause != null) {
+            spinner.visibility = View.GONE
+            errorText.text = cause.message
+            errorBox.visibility = View.VISIBLE; topBar.visibility = View.VISIBLE
+            return
+        }
         // Live streams that fall behind the live window: jump back to live edge.
         if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
             player?.seekToDefaultPosition(); player?.prepare(); return

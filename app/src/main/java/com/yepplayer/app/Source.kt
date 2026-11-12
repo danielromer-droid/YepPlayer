@@ -14,19 +14,40 @@ object Source {
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
-    fun get(url: String): String {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.connectTimeout = 12000
-        connection.readTimeout = 30000
-        connection.instanceFollowRedirects = true
-        connection.setRequestProperty("User-Agent", USER_AGENT)
-        try {
-            val code = connection.responseCode
-            if (code == 401 || code == 403) error("Access refused by the server (HTTP $code). Check your username and password.")
-            if (code !in 200..299) error("Server answered HTTP $code")
-            return connection.inputStream.bufferedReader().use { it.readText() }
-        } finally { connection.disconnect() }
+    /**
+     * Downloads [url], following up to 5 redirects by hand so that every hop is checked by [NetGuard]
+     * (a public server must not be able to bounce the app onto the home network).
+     */
+    fun fetch(url: String, connectTimeout: Int = 12000, readTimeout: Int = 30000): ByteArray {
+        var current = url
+        repeat(6) {
+            NetGuard.check(current)
+            val connection = URL(current).openConnection() as HttpURLConnection
+            connection.connectTimeout = connectTimeout
+            connection.readTimeout = readTimeout
+            connection.instanceFollowRedirects = false
+            connection.setRequestProperty("User-Agent", USER_AGENT)
+            try {
+                val code = connection.responseCode
+                if (code in 300..399) {
+                    val loc = connection.getHeaderField("Location") ?: error("Server redirect without a destination")
+                    current = URL(URL(current), loc).toString()
+                    return@repeat
+                }
+                if (code == 401 || code == 403) error("Access refused by the server (HTTP $code). Check your username and password.")
+                if (code !in 200..299) error("Server answered HTTP $code")
+                return connection.inputStream.use { it.readBytes() }
+            } finally { connection.disconnect() }
+        }
+        error("Too many redirects")
     }
+
+    fun get(url: String): String = String(fetch(url), Charsets.UTF_8)
+
+    /** Wraps a Media3 data source so every stream address (and each HLS segment) is checked by [NetGuard] first. */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun guarded(upstream: androidx.media3.datasource.DataSource.Factory): androidx.media3.datasource.DataSource.Factory =
+        androidx.media3.datasource.ResolvingDataSource.Factory(upstream) { spec -> NetGuard.check(spec.uri.toString()); spec }
 
     /** Normalises the server URL: adds http:// if missing, strips trailing slashes and a pasted player_api.php path. */
     fun base(p: Profile): String {

@@ -100,6 +100,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = C.rail
         window.navigationBarColor = C.rail
+        NetGuard.load(prefs)
         profile = Source.readProfile(prefs)
         // Re-save once so an old plain-text password gets encrypted.
         profile?.let { if (prefs.getString("profile", "")?.contains("\"password\"") == true) Source.saveProfile(prefs, it) }
@@ -969,7 +970,7 @@ class MainActivity : Activity() {
         }
         private fun buildPreview(): ExoPlayer {
             val http = DefaultHttpDataSource.Factory().setUserAgent(Source.USER_AGENT).setAllowCrossProtocolRedirects(true)
-            return ExoPlayer.Builder(this@MainActivity).setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this@MainActivity, http))).build().apply {
+            return ExoPlayer.Builder(this@MainActivity).setMediaSourceFactory(DefaultMediaSourceFactory(Source.guarded(DefaultDataSource.Factory(this@MainActivity, http)))).build().apply {
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
                         val url = current?.url ?: return
@@ -1017,11 +1018,7 @@ class MainActivity : Activity() {
         logoPool.execute {
             if (target.tag != url) return@execute
             try {
-                val bytes = URL(url).openConnection().run {
-                    connectTimeout = 5000; readTimeout = 8000
-                    setRequestProperty("User-Agent", Source.USER_AGENT)
-                    getInputStream().use { it.readBytes() }
-                }
+                val bytes = Source.fetch(url, 5000, 8000)
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                 var sample = 1
@@ -1227,7 +1224,7 @@ class MainActivity : Activity() {
     }
 
     private fun settings() {
-        val options = arrayOf("Playlists", "Account information", "Hide / show live TV groups", "Parental PIN", "Recently watched", "Refresh playlist data", "About YepPlayer")
+        val options = arrayOf("Playlists", "Account information", "Hide / show live TV groups", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "About YepPlayer")
         AlertDialog.Builder(this).setTitle("Settings").setItems(options) { _, which ->
             when (which) {
                 0 -> configure()
@@ -1235,12 +1232,27 @@ class MainActivity : Activity() {
                 2 -> manageGroups(cache["live"] ?: emptyList(), "live")
                 3 -> changePin()
                 4 -> browse("recent", recent(), "Recently watched")
+                6 -> networkSafety()
                 5 -> { cache.clear(); nowCache.clear(); detailsCache.clear(); logoCache.evictAll(); synchronized(failedLogos) { failedLogos.clear() }; prefs.edit().remove("acct_time|${profile?.base}").apply(); toast("Playlist data will reload") }
                 else -> AlertDialog.Builder(this).setTitle("YepPlayer ${packageManager.getPackageInfo(packageName, 0).versionName}")
                     .setMessage("A personal IPTV player for authorised playlists.\n\nTips: long-press an item for more options. In the player, use the channel buttons (or the remote's up/down keys) to zap between channels.")
                     .setPositiveButton("OK", null).show()
             }
         }.show()
+    }
+
+    private fun networkSafety() {
+        val on = prefs.getBoolean("allow_local", false)
+        AlertDialog.Builder(this).setTitle("Network safety")
+            .setMessage("YepPlayer only connects out to your IPTV provider. It opens no ports and accepts no connections from other devices.\n\n" +
+                "For extra safety, playlists, logos and streams that point to devices on your home network (router, computers, cameras) are blocked.\n\n" +
+                "Home network servers are currently " + (if (on) "ALLOWED." else "BLOCKED (recommended).") +
+                "\n\nOnly allow them if your IPTV server really runs at home.")
+            .setPositiveButton(if (on) "Block again" else "Allow home servers") { _, _ ->
+                prefs.edit().putBoolean("allow_local", !on).apply(); NetGuard.load(prefs)
+                toast(if (on) "Home network blocked" else "Home network servers allowed")
+            }
+            .setNegativeButton("Close", null).show()
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
