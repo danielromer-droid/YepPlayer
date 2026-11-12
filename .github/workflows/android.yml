@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout source
@@ -66,6 +66,19 @@ jobs:
       - name: Remove signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/yepplayer-release.jks"
+
+      - name: Publish release with a direct download link
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ steps.key.outputs.file != '' }}
+        run: |
+          VERSION=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | cut -d'"' -f2)
+          TAG="v${VERSION}-build${{ github.run_number }}"
+          cp dist/*.apk YepPlayer.apk
+          if [ "$SIGNED" = "true" ]; then KIND="Signed release"; else KIND="Test build (not signed yet)"; fi
+          gh release create "$TAG" YepPlayer.apk --target "$GITHUB_SHA" --title "YepPlayer $VERSION (build ${{ github.run_number }})" \
+            --notes "$KIND. Always-latest download link: https://github.com/${{ github.repository }}/releases/latest/download/YepPlayer.apk"
 
       - name: Upload YepPlayer APK
         uses: actions/upload-artifact@v4
