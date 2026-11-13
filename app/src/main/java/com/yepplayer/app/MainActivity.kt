@@ -457,8 +457,15 @@ class MainActivity : Activity() {
         list.firstOrNull { it.url == last }?.let { return it }
         val hidden = hiddenGroups("live")
         val bbc = Regex("\\bbbc[\\s._-]*(one|1)\\b", RegexOption.IGNORE_CASE)
-        return list.filter { bbc.containsMatchIn(it.name) && !it.name.contains("+1") && it.category !in hidden }
-            .sortedWith(compareBy({ !it.name.contains("HD", true) }, { it.name.length })).firstOrNull()
+        // UK BBC One: prefer channels whose name or group says UK, then the plain national channel (not a regional/+1 version), then HD.
+        val uk = Regex("(^|[^a-z])(uk|gb|united kingdom|great britain|england)([^a-z]|$)", RegexOption.IGNORE_CASE)
+        val regional = Regex("scotland|wales|cymru|northern ireland|\\bni\\b|london|yorkshire|midlands|north|south|east|west|channel islands|\\+1", RegexOption.IGNORE_CASE)
+        return list.filter { bbc.containsMatchIn(it.name) && it.category !in hidden }
+            .sortedWith(compareBy(
+                { !(uk.containsMatchIn(it.name) || uk.containsMatchIn(it.category)) },
+                { regional.containsMatchIn(it.name) },
+                { !it.name.contains("HD", true) },
+                { it.name.length })).firstOrNull()
     }
 
     private fun homeTvTile(): FrameLayout {
