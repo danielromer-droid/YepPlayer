@@ -17,7 +17,7 @@ data class MediaItem(
 )
 
 /** Extra details for a movie or series, loaded when it is selected. */
-data class Details(val plot: String, val year: String, val duration: String, val genre: String, val rating: String, val cover: String)
+data class Details(val plot: String, val year: String, val duration: String, val genre: String, val rating: String, val cover: String, val backdrop: String = "")
 data class Profile(val type: String, val base: String, val username: String = "", val password: String = "")
 
 /** One programme from the Xtream EPG. Times are epoch seconds (UTC). */
