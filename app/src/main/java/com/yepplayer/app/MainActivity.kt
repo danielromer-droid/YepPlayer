@@ -121,6 +121,13 @@ class MainActivity : Activity() {
         addState(intArrayOf(), shape(color, radiusDp, stroke))
     }
 
+    /** List/grid selector for TV remotes: a bright frame drawn on top of the focused row, so it is always visible. */
+    private fun tvSelector(radiusDp: Int): Drawable = StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_pressed), shape(C.accentTint, radiusDp, Color.WHITE, 3))
+        addState(intArrayOf(android.R.attr.state_focused), shape(Color.TRANSPARENT, radiusDp, Color.WHITE, 3))
+        addState(intArrayOf(), shape(Color.TRANSPARENT, radiusDp))
+    }
+
     private fun text(value: CharSequence, size: Float, color: Int = C.text, weight: Int = 400, lines: Int = 1): TextView = TextView(this).apply {
         text = value; textSize = size; setTextColor(color)
         typeface = if (android.os.Build.VERSION.SDK_INT >= 28) Typeface.create(Typeface.DEFAULT, weight, false) else if (weight >= 600) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
@@ -178,6 +185,12 @@ class MainActivity : Activity() {
         if (old.isNotEmpty() && (w.startsWith(old[0], true) || old[0].startsWith(w, true)) && old[0].length <= w.length) old.removeAt(0)
         old.removeAll { it.equals(w, true) }
         saveRecentSearches(listOf(w) + old)
+    }
+
+    private fun openKeyboard(input: EditText) {
+        input.requestFocus()
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        input.post { if (!imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)) imm.toggleSoftInput(android.view.inputmethod.InputMethodManager.SHOW_FORCED, 0) }
     }
 
     private fun searchBox(hint: String, onChange: (String) -> Unit, onSubmit: ((String) -> Unit)? = null): Pair<LinearLayout, EditText> {
@@ -266,22 +279,24 @@ class MainActivity : Activity() {
                     onSubmit?.invoke(q); onSubmit != null
                 } else false
             }
-            setOnFocusChangeListener { _, has -> if (has) post { showRecent() } else main.postDelayed({ if (popup?.isFocusable != true) popup?.dismiss() }, 150) }
+            setOnFocusChangeListener { _, has ->
+                box.background = if (has) shape(C.panel, 22, Color.WHITE, 3) else shape(C.panel, 22, C.border)
+                if (has) post { showRecent() } else main.postDelayed({ if (popup?.isFocusable != true) popup?.dismiss() }, 150) }
             setOnClickListener { if (popup == null) showRecent() }
             // TV remote: Down moves into the recent list.
             setOnKeyListener { _, code, ev ->
                 val pw = popup
-                if (code == KeyEvent.KEYCODE_DPAD_DOWN && ev.action == KeyEvent.ACTION_DOWN && pw != null && pw.isShowing) {
+                // TV remote OK (or Enter on an empty box): always bring up the on-screen keyboard.
+                val ok = code == KeyEvent.KEYCODE_DPAD_CENTER || (code == KeyEvent.KEYCODE_ENTER && input.text.isEmpty())
+                if (ok && ev.action == KeyEvent.ACTION_UP) { openKeyboard(input); true }
+                else if (ok) true else if (code == KeyEvent.KEYCODE_DPAD_DOWN && ev.action == KeyEvent.ACTION_DOWN && pw != null && pw.isShowing) {
                     pw.isFocusable = true; pw.update()
                     pw.contentView.post { (pw.contentView as? ViewGroup)?.getChildAt(1)?.let { (it as ViewGroup).getChildAt(0).requestFocus() } }
                     true
                 } else false
             }
         }
-        clickable(clear) {
-            input.setText(""); input.requestFocus()
-            (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(input, 0)
-        }
+        clickable(clear) { input.setText(""); openKeyboard(input) }
         box.addView(input, lp(0, -1, 1f))
         box.addView(clear, lp(dp(32), dp(32)))
         box.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
@@ -696,9 +711,11 @@ class MainActivity : Activity() {
             head.addView(iconButton(R.drawable.ic_back, "Back", 44, C.panel2) { onBack() })
             head.addView(text(title, 21f, C.text, 800).apply { setPadding(dp(10), 0, 0, 0) }, lp(0, -2, 1f))
             gp.addView(head)
-            val gl = ListView(this).apply { divider = null; dividerHeight = dp(4); adapter = groupAdapter; selector = shape(C.accentTint, 12); isVerticalScrollBarEnabled = false }
+            val gl = ListView(this).apply {
+                id = View.generateViewId(); divider = null; dividerHeight = dp(4); adapter = groupAdapter
+                selector = tvSelector(12); setDrawSelectorOnTop(true); isVerticalScrollBarEnabled = false
+            }
             gp.addView(gl, lp(-1, 0, 1f))
-            if (kind in setOf("live", "vod", "series")) gp.addView(pill("Manage groups") { manageGroups(data, kind) { browse(kind, data, title, guide, active, onBack) } }, lp(-1, dp(44), t = 8))
             row.addView(gp, LinearLayout.LayoutParams(dp(if (wide) 250 else 210), -1))
             row.addView(View(this).apply { setBackgroundColor(C.line) }, LinearLayout.LayoutParams(dp(1), -1))
             groupList = gl
@@ -706,7 +723,6 @@ class MainActivity : Activity() {
             val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
             head.addView(iconButton(R.drawable.ic_back, "Back", 44, C.panel2) { onBack() })
             head.addView(text(title, 20f, C.text, 800).apply { setPadding(dp(10), 0, 0, 0) }, lp(0, -2, 1f))
-            if (kind in setOf("live", "vod", "series")) head.addView(iconButton(R.drawable.ic_list, "Manage groups") { manageGroups(data, kind) { browse(kind, data, title, guide, active, onBack) } })
             mainPane.addView(head, lp(-1, -2, b = 10))
             if (groups.size > 2) {
                 val sp = Spinner(this).apply {
@@ -722,7 +738,7 @@ class MainActivity : Activity() {
         // Search + sort.
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         lateinit var render: () -> Unit
-        val (box, _) = searchBox(if (medium) "Search in ${title.lowercase()}" else "Search", { q -> query = q; render() })
+        val (box, searchInput) = searchBox(if (medium) "Search in ${title.lowercase()}" else "Search", { q -> query = q; render() })
         tools.addView(box, lp(0, dp(44), 1f))
         if (grid) {
             val sortBtn = pill("Default order") {}
@@ -765,16 +781,28 @@ class MainActivity : Activity() {
             collection = GridView(this).apply {
                 numColumns = GridView.AUTO_FIT; columnWidth = dp(if (medium) 124 else 104); stretchMode = GridView.STRETCH_COLUMN_WIDTH
                 horizontalSpacing = dp(12); verticalSpacing = dp(14); this.adapter = adapter; clipToPadding = false; setPadding(0, 0, 0, dp(16))
-                selector = shape(Color.TRANSPARENT, 12); setDrawSelectorOnTop(false)
+                selector = tvSelector(14); setDrawSelectorOnTop(true)
             }
         } else {
             adapter = RowAdapter(kind, mixed) { visible to selected }
             collection = ListView(this).apply {
                 divider = null; dividerHeight = dp(4); this.adapter = adapter; isFastScrollEnabled = true
-                selector = shape(C.accentTint, 12); clipToPadding = false; setPadding(0, 0, 0, dp(16))
+                selector = tvSelector(12); setDrawSelectorOnTop(true); clipToPadding = false; setPadding(0, 0, 0, dp(16))
             }
         }
         mainPane.addView(collection, lp(-1, 0, 1f))
+
+        // TV remote: arrows move between the groups column, the search bar and the list (never into the preview pane).
+        collection.id = View.generateViewId()
+        if (searchInput.id == View.NO_ID) searchInput.id = View.generateViewId()
+        collection.nextFocusUpId = searchInput.id
+        collection.nextFocusRightId = collection.id
+        searchInput.nextFocusDownId = collection.id
+        groupList?.let { gl ->
+            gl.nextFocusRightId = collection.id
+            collection.nextFocusLeftId = gl.id
+            searchInput.nextFocusLeftId = gl.id
+        }
 
         render = {
             val g = groups.getOrNull(groupIndex)?.name ?: allLabel
@@ -814,7 +842,19 @@ class MainActivity : Activity() {
         }
         collection.setOnItemLongClickListener { _, _, position, _ ->
             val item = visible.getOrNull(position) ?: return@setOnItemLongClickListener true
-            itemMenu(item, visible); true
+            if (item.kind == "live") {
+                // Long press (or holding OK on the remote) adds/removes a favourite; the Menu key has the other options.
+                toggleFavourite(item)
+                toast(if (isFavourite(item)) "★ Added to favourites" else "Removed from favourites")
+                adapter.notifyDataSetChanged()
+                if (groups.getOrNull(groupIndex)?.name == "Favourites") render()
+            } else itemMenu(item, visible)
+            true
+        }
+        collection.setOnKeyListener { _, code, ev ->
+            if (code == KeyEvent.KEYCODE_MENU && ev.action == KeyEvent.ACTION_UP) {
+                visible.getOrNull(collection.selectedItemPosition)?.let { itemMenu(it, visible) }; true
+            } else false
         }
         // TV remotes: moving focus over a row updates the preview / details.
         collection.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
@@ -1038,13 +1078,12 @@ class MainActivity : Activity() {
         val view = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(20), dp(12)) }
         private val video = FrameLayout(this@MainActivity).apply { background = shape(Color.rgb(5, 7, 11), 16, C.border); clipToOutline = true }
         private val playerView = PlayerView(this@MainActivity).apply { useController = false; setShutterBackgroundColor(Color.rgb(5, 7, 11)) }
-        private val hint = text("Video preview · press OK for full screen", 13f, C.faint).apply { gravity = Gravity.CENTER }
+        private val hint = text("Video preview · press OK again for full screen", 13f, C.faint).apply { gravity = Gravity.CENTER }
         private val chName = text("", 15f, C.text, 700)
+        private val bigName = text("", 22f, C.text, 800, 2)
         private val nowLabel = text("", 11f, C.highlight, 800).apply { letterSpacing = 0.08f }
         private val nowTitle = text("", 20f, C.text, 700, 2)
         private val nowDesc = text("", 13f, C.muted, 400, 2).apply { setLineSpacing(0f, 1.25f) }
-        private val catchupBtn: LinearLayout
-        private val favBtn: LinearLayout
         private val upcoming = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL }
         private var current: MediaItem? = null
         private var pending: Runnable? = null
@@ -1058,31 +1097,27 @@ class MainActivity : Activity() {
             video.addView(badges, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
             video.addView(chName, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(12)) })
             clickable(video) { current?.let { onWatch?.invoke(it) } }
+            video.isFocusable = false // the remote stays in the channel list; OK on the chosen channel opens full screen
             view.addView(video, lp(-1, dp(260)))
-            view.addView(nowLabel, lp(-1, -2, t = 16)); view.addView(nowTitle, lp(-1, -2, t = 6)); view.addView(nowDesc, lp(-1, -2, t = 6))
-            val btns = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
-            btns.addView(pill("Watch", true, R.drawable.ic_play) { current?.let { onWatch?.invoke(it) } })
-            catchupBtn = pill("Catch-up") { current?.let { catchup(it) } }
-            favBtn = pill("Add to favourites") { current?.let { toggleFavourite(it); show(it, null, restartVideo = false); refreshList?.invoke() } }
-            btns.addView(catchupBtn, lp(-2, dp(44), l = 10)); btns.addView(favBtn, lp(-2, dp(44), l = 10))
-            view.addView(HorizontalScrollView(this@MainActivity).apply { isHorizontalScrollBarEnabled = false; addView(btns) }, lp(-1, -2, t = 14))
+            view.addView(bigName, lp(-1, -2, t = 16))
+            view.addView(nowLabel, lp(-1, -2, t = 8)); view.addView(nowTitle, lp(-1, -2, t = 6)); view.addView(nowDesc, lp(-1, -2, t = 6))
             view.addView(View(this@MainActivity).apply { setBackgroundColor(C.line) }, lp(-1, dp(1), t = 14))
-            view.addView(ScrollView(this@MainActivity).apply { addView(upcoming) }, lp(-1, 0, 1f, t = 6))
+            view.addView(text("SCHEDULE", 11f, C.soft, 800).apply { letterSpacing = 0.1f }, lp(-1, -2, t = 10))
+            view.addView(ScrollView(this@MainActivity).apply { isFocusable = false; addView(upcoming) }, lp(-1, 0, 1f, t = 4))
         }
         fun show(item: MediaItem, siblings: List<MediaItem>?, restartVideo: Boolean = true, force: Boolean = false) {
             val changed = current?.let { sameItem(it, item) } != true
             current = item
             chName.text = item.name
-            catchupBtn.visibility = if (item.catchup && profile?.type == "xtream") View.VISIBLE else View.GONE
-            ((favBtn.getChildAt(0)) as TextView).text = if (isFavourite(item)) "Remove favourite" else "Add to favourites"
+            bigName.text = item.name
             if (!changed && !force) return
-            nowLabel.text = ""; nowTitle.text = item.name; nowDesc.text = item.category; upcoming.removeAllViews()
+            nowLabel.text = ""; nowTitle.text = ""; nowDesc.text = item.category; upcoming.removeAllViews()
             loadGuide(item)
             if (restartVideo) {
                 pending?.let { main.removeCallbacks(it) }
                 preview?.stop()
                 val restricted = prefs.getString("pin", null) != null && isRestricted(item)
-                hint.text = if (restricted) "Protected by parental PIN" else "Video preview · press OK for full screen"
+                hint.text = if (restricted) "Protected by parental PIN" else "Video preview · press OK again for full screen"
                 if (!restricted) pending = Runnable { startPreview(item) }.also { main.postDelayed(it, if (force) 900L else 650L) }
             }
         }
@@ -1118,14 +1153,13 @@ class MainActivity : Activity() {
                         nowCache[item.id] = cur
                         nowLabel.text = "NOW · ${timeFmt.format(Date(cur.start * 1000))} – ${timeFmt.format(Date(cur.stop * 1000))}"
                         nowTitle.text = cur.title; nowDesc.text = cur.description
-                    } else { nowLabel.text = ""; nowDesc.text = "No guide data for this channel" }
+                    } else { nowLabel.text = ""; nowTitle.text = ""; nowDesc.text = "No guide data for this channel" }
                     upcoming.removeAllViews()
                     list.filter { it.start >= (cur?.stop ?: now) }.take(8).forEach { e ->
                         val r = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
                         r.addView(text(timeFmt.format(Date(e.start * 1000)), 14f, C.muted, 600), lp(dp(56), -2))
                         r.addView(text(e.title, 14f, C.text2), lp(0, -2, 1f))
-                        clickable(r) { epgDetails(item, e, null) }
-                        r.background = focusable(Color.TRANSPARENT, 8, null)
+                        r.setOnClickListener { epgDetails(item, e, null) } // touch only; remote stays in the list
                         upcoming.addView(r, lp(-1, dp(40)))
                     }
                 }
@@ -1156,6 +1190,21 @@ class MainActivity : Activity() {
                 } else synchronized(failedLogos) { failedLogos.add(url) }
             } catch (_: Exception) { synchronized(failedLogos) { failedLogos.add(url) } }
         }
+    }
+
+    private fun chooseGroupsToManage() {
+        val p = profile ?: run { configure(); return }
+        val kinds = if (p.type == "xtream") listOf("live", "vod", "series") else listOf("live")
+        val labels = kinds.map { when (it) { "live" -> "Live TV"; "vod" -> "Movies"; else -> "Series" } }
+        AlertDialog.Builder(this).setTitle("Hide / show groups").setItems(labels.toTypedArray()) { _, which ->
+            val k = kinds[which]
+            cache[k]?.let { manageGroups(it, k); return@setItems }
+            toast("Loading ${labels[which].lowercase()}…")
+            pool.execute {
+                val l = try { Source.load(p, k) } catch (_: Exception) { null }
+                runOnUiThread { if (l == null) toast("Couldn't load the list") else { cache[k] = l; manageGroups(l, k) } }
+            }
+        }.setNegativeButton("Cancel", null).show()
     }
 
     private fun manageGroups(source: List<MediaItem> = cache["live"] ?: emptyList(), kind: String = "live", after: () -> Unit = {}) {
@@ -1351,12 +1400,12 @@ class MainActivity : Activity() {
     }
 
     private fun settings() {
-        val options = arrayOf("Playlists", "Account information", "Hide / show live TV groups", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "Colours", "About YepPlayer")
+        val options = arrayOf("Playlists", "Account information", "Hide / show groups", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "Colours", "About YepPlayer")
         AlertDialog.Builder(this).setTitle("Settings").setItems(options) { _, which ->
             when (which) {
                 0 -> configure()
                 1 -> showAccount()
-                2 -> manageGroups(cache["live"] ?: emptyList(), "live")
+                2 -> chooseGroupsToManage()
                 3 -> changePin()
                 4 -> browse("recent", recent(), "Recently watched")
                 6 -> networkSafety()
