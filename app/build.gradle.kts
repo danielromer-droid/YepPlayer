@@ -7,7 +7,7 @@ val releaseKeystore = System.getenv("YEP_KEYSTORE_FILE")?.let { file(it) }?.take
 android {
     namespace = "com.yepplayer.app"
     compileSdk = 35
-    defaultConfig { applicationId = "com.yepplayer.app"; minSdk = 26; targetSdk = 35; versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.plus(100) ?: 5); versionName = "0.5.1" }
+    defaultConfig { applicationId = "com.yepplayer.app"; minSdk = 26; targetSdk = 35; versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.plus(100) ?: 5); versionName = "0.5.2" }
     signingConfigs {
         if (releaseKeystore != null) create("release") {
             storeFile = releaseKeystore
