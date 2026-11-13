@@ -7,7 +7,7 @@ import java.net.URL
 import java.net.URLEncoder
 
 object Source {
-    const val USER_AGENT = "YepPlayer/0.4"
+    const val USER_AGENT = "YepPlayer/0.5"
 
     fun resumeKey(url: String) = "resume|" + url.substringAfterLast('/')
     fun durationKey(url: String) = "resume_dur|" + url.substringAfterLast('/')
