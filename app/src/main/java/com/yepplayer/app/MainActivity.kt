@@ -410,7 +410,8 @@ class MainActivity : Activity() {
             clickable(t, go)
             tiles.addView(t, lp(0, -1, weight, r = 8, l = 8))
         }
-        tile(R.drawable.ic_live, "Live TV", countLine("live", "channels", "Channels & groups"), true, 1.35f) { load("live") }
+        val tv = homeTvTile()
+        tiles.addView(tv, lp(0, -1, 1.35f, r = 8, l = 8))
         tile(R.drawable.ic_movie, "Movies", countLine("vod", "titles", "Your film library"), false, 1f) { load("vod") }
         tile(R.drawable.ic_series, "Series", countLine("series", "shows", "Seasons & episodes"), false, 1f) { load("series") }
         page.addView(tiles, lp(-1, dp(if (medium) 210 else 150), t = 22, l = -8, r = -8))
@@ -444,7 +445,82 @@ class MainActivity : Activity() {
             rec.take(12).forEach { item -> strip.addView(recentCard(item), lp(dp(210), -2, r = 14)) }
             page.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(strip) }, lp(-1, -2, t = 12))
         }
+        tv.post { tv.requestFocus() } // the remote starts on Live TV
         page.addView(text("Only use streams and playlists you are authorised to access.", 11f, C.faint, 400, 2).apply { gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0) }, lp(-1, -2))
+    }
+
+    // ---------------------------------------------------------------- home TV box
+
+    /** The channel the Home TV box plays: the last one watched, otherwise BBC One. */
+    private fun homeChannel(list: List<MediaItem>): MediaItem? {
+        val last = prefs.getString("last_live_url", null)
+        list.firstOrNull { it.url == last }?.let { return it }
+        val hidden = hiddenGroups("live")
+        val bbc = Regex("\\bbbc[\\s._-]*(one|1)\\b", RegexOption.IGNORE_CASE)
+        return list.filter { bbc.containsMatchIn(it.name) && !it.name.contains("+1") && it.category !in hidden }
+            .sortedWith(compareBy({ !it.name.contains("HD", true) }, { it.name.length })).firstOrNull()
+    }
+
+    private fun homeTvTile(): FrameLayout {
+        val tile = FrameLayout(this).apply { background = shape(Color.BLACK, 22); clipToOutline = true }
+        val glow = ImageView(this).apply { setImageResource(R.drawable.home_glow); scaleType = ImageView.ScaleType.CENTER_CROP }
+        tile.addView(glow, FrameLayout.LayoutParams(-1, -1))
+        val pv = PlayerView(this).apply { useController = false; setShutterBackgroundColor(Color.TRANSPARENT); visibility = View.INVISIBLE; isFocusable = false }
+        tile.addView(pv, FrameLayout.LayoutParams(-1, -1))
+        tile.addView(View(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.TRANSPARENT, Color.argb(190, 0, 0, 0)))
+        }, FrameLayout.LayoutParams(-1, dp(120), Gravity.BOTTOM))
+        val live = badge("LIVE", C.red).apply { visibility = View.GONE }
+        tile.addView(live, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(16), dp(16), 0, 0) })
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(text("Live TV", if (medium) 28f else 19f, Color.WHITE, 800))
+        val sub = text(countLine("live", "channels", "Channels & groups"), 13f, Color.rgb(233, 230, 245), 600).apply { setPadding(0, dp(4), 0, 0) }
+        col.addView(sub)
+        tile.addView(col, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(if (medium) 22 else 14), 0, dp(14), dp(16)) })
+        // Bright frame on top when the remote is on it.
+        tile.foreground = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_focused), shape(Color.TRANSPARENT, 22, Color.WHITE, 3))
+            addState(intArrayOf(), shape(Color.TRANSPARENT, 22))
+        }
+        var playing: MediaItem? = null
+        var channels: List<MediaItem> = emptyList()
+        clickable(tile) {
+            val item = playing
+            if (item != null) withPin(item) { playLive(item, channels) } else load("live")
+        }
+        fun idle() { pv.visibility = View.INVISIBLE; live.visibility = View.GONE; playing = null }
+        fun start(list: List<MediaItem>) {
+            channels = list
+            val item = homeChannel(list) ?: run { idle(); return }
+            if (prefs.getString("pin", null) != null && isRestricted(item)) { idle(); return }
+            stopPreview()
+            var triedTs = false
+            val http = DefaultHttpDataSource.Factory().setUserAgent(Source.USER_AGENT).setAllowCrossProtocolRedirects(true)
+            val pl = ExoPlayer.Builder(this).setMediaSourceFactory(DefaultMediaSourceFactory(Source.guarded(DefaultDataSource.Factory(this, http)))).build()
+            pl.addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    if (!triedTs && item.url.endsWith(".m3u8")) { triedTs = true; pl.setMediaItem(ExoItem.fromUri(item.url.removeSuffix(".m3u8") + ".ts")); pl.prepare(); pl.playWhenReady = true }
+                    else idle()
+                }
+                override fun onRenderedFirstFrame() { pv.visibility = View.VISIBLE; live.visibility = View.VISIBLE }
+            })
+            preview = pl
+            pv.player = pl
+            playing = item
+            sub.text = item.name + (nowCache[item.id]?.let { " · ${it.title}" } ?: "")
+            pl.setMediaItem(ExoItem.fromUri(item.url)); pl.prepare(); pl.playWhenReady = true
+        }
+        fun begin() {
+            val p = profile ?: return
+            cache["live"]?.let { start(it); return }
+            pool.execute {
+                val l = try { Source.load(p, "live") } catch (_: Exception) { null }
+                runOnUiThread { if (l != null && tile.isAttachedToWindow) { cache["live"] = l; start(l) } }
+            }
+        }
+        tile.post { begin() }
+        resumePreview = { if (tile.isAttachedToWindow) { idle(); begin() } }
+        return tile
     }
 
     /** Simple wrapping grid built from rows of weighted cells (keeps D-pad navigation natural). */
@@ -673,8 +749,10 @@ class MainActivity : Activity() {
         val cats = base.groupBy { it.category }
         val groups = listOf(Group(allLabel, base.size)) +
             specials.map { s -> Group(s, (if (s == "Favourites") favourites() else recent()).count { it.kind == kind || (kind == "series" && it.kind == "episode") }) } +
-            (if (kind == "episode") cats.keys.toList() else cats.keys.sortedBy { it.lowercase() }).map { Group(it, cats[it]!!.size) }
-        var groupIndex = 0
+            (if (kind == "episode") cats.keys.toList() else orderedGroups(kind, cats.keys)).map { Group(it, cats[it]!!.size) }
+        // Live TV opens on Favourites (when there are some), with the remote on the first favourite channel.
+        val startOnFavs = kind == "live" && !guide && specials.isNotEmpty() && favourites().any { it.kind == "live" && it.category !in hidden }
+        var groupIndex = if (startOnFavs) groups.indexOfFirst { it.name == "Favourites" }.coerceAtLeast(0) else 0
         var query = ""
         var sort = 0 // 0 provider order, 1 recently added, 2 A–Z
         var selected: MediaItem? = null
@@ -873,6 +951,10 @@ class MainActivity : Activity() {
                 val pos = visible.indexOfFirst { sameItem(it, item) }
                 if (pos >= 0) collection.setSelection(pos)
             }
+        }
+        if (startOnFavs) {
+            groupSpinner?.setSelection(groupIndex)
+            collection.post { collection.requestFocus(); collection.setSelection(0) }
         }
         previewPane?.onWatch = { item -> openItem(item, visible) { browse(kind, data, title, guide, active, onBack) } }
         details?.onOpen = { item -> openItem(item, visible) { browse(kind, data, title, guide, active, onBack) } }
@@ -1192,6 +1274,103 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun groupOrderKey(kind: String) = "group_order|$kind|${profile?.base}"
+    private fun groupOrder(kind: String): List<String> = try {
+        JSONArray(prefs.getString(groupOrderKey(kind), "[]")).let { a -> (0 until a.length()).map { a.getString(it) } }
+    } catch (_: Exception) { emptyList() }
+
+    /** Groups in the user's chosen order; groups never arranged follow A–Z. */
+    private fun orderedGroups(kind: String, names: Collection<String>): List<String> {
+        val order = groupOrder(kind)
+        if (order.isEmpty()) return names.sortedBy { it.lowercase() }
+        val rank = order.withIndex().associate { it.value to it.index }
+        return names.sortedWith(compareBy({ rank[it] ?: Int.MAX_VALUE }, { it.lowercase() }))
+    }
+
+    private fun chooseArrange() {
+        val p = profile ?: run { configure(); return }
+        val kinds = if (p.type == "xtream") listOf("live", "vod", "series") else listOf("live")
+        val labels = kinds.map { when (it) { "live" -> "Live TV groups"; "vod" -> "Movie groups"; else -> "Series groups" } } + "Favourite channels"
+        AlertDialog.Builder(this).setTitle("Arrange order").setItems(labels.toTypedArray()) { _, which ->
+            if (which == kinds.size) { val f = favourites(); arrange("Favourite channels", f.map { it.name }) { order -> storeList("fav_items", order.mapNotNull { i -> f.getOrNull(i) }) }; return@setItems }
+            val k = kinds[which]
+            fun open(list: List<MediaItem>) {
+                val hidden = hiddenGroups(k)
+                val names = orderedGroups(k, list.map { it.category }.distinct().filter { it !in hidden })
+                arrange(labels[which], names) { order -> prefs.edit().putString(groupOrderKey(k), JSONArray(order.map { names[it] }).toString()).apply() }
+            }
+            cache[k]?.let { open(it); return@setItems }
+            toast("Loading…")
+            pool.execute {
+                val l = try { Source.load(p, k) } catch (_: Exception) { null }
+                runOnUiThread { if (l == null) toast("Couldn't load the list") else { cache[k] = l; open(l) } }
+            }
+        }.setNegativeButton("Cancel", null).show()
+    }
+
+    /** Reorder screen: OK picks an item up, Up/Down moves it, OK drops it. Touch: tap to pick, tap another row to move it there. [save] gets the new order as original indexes. */
+    private fun arrange(title: String, names: List<String>, save: (List<Int>) -> Unit) {
+        if (names.isEmpty()) { toast("Nothing to arrange yet"); return }
+        val content = shell("settings")
+        back = { home() }
+        val order = names.indices.toMutableList()
+        var held = -1
+        val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(if (medium) 40 else 16), dp(24), dp(if (medium) 40 else 16), dp(16)) }
+        content.addView(page, lp(-1, -1))
+        page.addView(text(title, 26f, C.text, 800))
+        page.addView(text("Press OK to pick up an item, move it with Up / Down, then press OK again to drop it. The order is saved straight away.", 14f, C.muted, 400, 3).apply { setPadding(0, dp(6), 0, dp(14)) })
+        lateinit var list: ListView
+        val adapter = object : BaseAdapter() {
+            override fun getCount() = order.size
+            override fun getItem(position: Int) = names[order[position]]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+                val v = (convertView as? LinearLayout) ?: LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), 0, dp(14), 0)
+                    addView(text("", 13f, C.faint, 700).apply { gravity = Gravity.END }, lp(dp(28), -2, r = 14))
+                    addView(text("", 15f, C.text, 600), lp(0, -2, 1f))
+                    addView(text("", 11f, C.soft, 800).apply { letterSpacing = 0.06f })
+                    layoutParams = AbsListView.LayoutParams(-1, dp(50))
+                }
+                val on = position == held
+                (v.getChildAt(0) as TextView).text = (position + 1).toString()
+                (v.getChildAt(1) as TextView).text = names[order[position]]
+                (v.getChildAt(2) as TextView).text = if (on) "▲▼ MOVING" else ""
+                v.background = shape(if (on) C.accentTint else C.panel, 12, if (on) C.accent else C.border, if (on) 2 else 1)
+                return v
+            }
+        }
+        list = ListView(this).apply {
+            divider = null; dividerHeight = dp(6); this.adapter = adapter
+            selector = tvSelector(12); setDrawSelectorOnTop(true); clipToPadding = false; setPadding(0, 0, 0, dp(16))
+        }
+        page.addView(list, lp(if (medium) dp(620) else -1, 0, 1f))
+        fun moveTo(to: Int) {
+            if (held < 0 || to < 0 || to >= order.size || to == held) return
+            order.add(to, order.removeAt(held)); held = to
+            adapter.notifyDataSetChanged(); list.setSelection(to)
+            save(order.toList())
+        }
+        list.setOnItemClickListener { _, _, position, _ ->
+            when {
+                held < 0 -> held = position
+                held == position -> held = -1
+                else -> { moveTo(position); held = -1 }
+            }
+            adapter.notifyDataSetChanged()
+        }
+        list.setOnKeyListener { _, code, ev ->
+            if (held < 0 || ev.action != KeyEvent.ACTION_DOWN) false
+            else when (code) {
+                KeyEvent.KEYCODE_DPAD_UP -> { moveTo(held - 1); true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { moveTo(held + 1); true }
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> true
+                else -> false
+            }
+        }
+        list.post { list.requestFocus(); list.setSelection(0) }
+    }
+
     private fun chooseGroupsToManage() {
         val p = profile ?: run { configure(); return }
         val kinds = if (p.type == "xtream") listOf("live", "vod", "series") else listOf("live")
@@ -1400,17 +1579,18 @@ class MainActivity : Activity() {
     }
 
     private fun settings() {
-        val options = arrayOf("Playlists", "Account information", "Hide / show groups", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "Colours", "About YepPlayer")
+        val options = arrayOf("Playlists", "Account information", "Hide / show groups", "Arrange order", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "Colours", "About YepPlayer")
         AlertDialog.Builder(this).setTitle("Settings").setItems(options) { _, which ->
             when (which) {
                 0 -> configure()
                 1 -> showAccount()
                 2 -> chooseGroupsToManage()
-                3 -> changePin()
-                4 -> browse("recent", recent(), "Recently watched")
-                6 -> networkSafety()
-                7 -> colours()
-                5 -> { cache.clear(); nowCache.clear(); detailsCache.clear(); logoCache.evictAll(); synchronized(failedLogos) { failedLogos.clear() }; prefs.edit().remove("acct_time|${profile?.base}").apply(); toast("Playlist data will reload") }
+                3 -> chooseArrange()
+                4 -> changePin()
+                5 -> browse("recent", recent(), "Recently watched")
+                7 -> networkSafety()
+                8 -> colours()
+                6 -> { cache.clear(); nowCache.clear(); detailsCache.clear(); logoCache.evictAll(); synchronized(failedLogos) { failedLogos.clear() }; prefs.edit().remove("acct_time|${profile?.base}").apply(); toast("Playlist data will reload") }
                 else -> AlertDialog.Builder(this).setTitle("YepPlayer ${packageManager.getPackageInfo(packageName, 0).versionName}")
                     .setMessage("A personal IPTV player for authorised playlists.\n\nTips: long-press an item for more options. In the player, use the channel buttons (or the remote's up/down keys) to zap between channels.")
                     .setPositiveButton("OK", null).show()
