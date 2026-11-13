@@ -161,24 +161,133 @@ class MainActivity : Activity() {
         letterSpacing = 0.08f; setPadding(dp(7), dp(3), dp(7), dp(3)); background = shape(bg, 6)
     }
 
+    // ---------------------------------------------------------------- recent searches (last 5)
+
+    private fun recentSearches(): List<String> = try {
+        JSONArray(prefs.getString("recent_searches", "[]")).let { a -> (0 until a.length()).map { a.getString(it) } }
+    } catch (_: Exception) { emptyList() }
+
+    private fun saveRecentSearches(list: List<String>) =
+        prefs.edit().putString("recent_searches", JSONArray(list.take(5)).toString()).apply()
+
+    /** Newest first, no duplicates (ignoring case), at most 5. A longer version of the newest word replaces it. */
+    private fun rememberSearch(q: String) {
+        val w = q.trim().take(60)
+        if (w.length < 2) return
+        val old = recentSearches().toMutableList()
+        if (old.isNotEmpty() && (w.startsWith(old[0], true) || old[0].startsWith(w, true)) && old[0].length <= w.length) old.removeAt(0)
+        old.removeAll { it.equals(w, true) }
+        saveRecentSearches(listOf(w) + old)
+    }
+
     private fun searchBox(hint: String, onChange: (String) -> Unit, onSubmit: ((String) -> Unit)? = null): Pair<LinearLayout, EditText> {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), 0, dp(14), 0); background = shape(C.panel, 22, C.border)
+            setPadding(dp(14), 0, dp(6), 0); background = shape(C.panel, 22, C.border)
         }
         box.addView(icon(R.drawable.ic_search, C.muted, 17))
-        val input = EditText(this).apply {
+        lateinit var input: EditText
+        var popup: PopupWindow? = null
+        val saveLater = Runnable { rememberSearch(input.text.toString()) }
+        val clear = FrameLayout(this).apply {
+            contentDescription = "Clear search"; visibility = View.GONE
+            background = focusable(C.panel2, 16, null)
+            addView(icon(R.drawable.ic_close, C.text, 14), FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER))
+        }
+
+        fun showRecent() {
+            popup?.dismiss(); popup = null
+            val words = recentSearches()
+            if (words.isEmpty() || input.text.isNotEmpty() || !input.hasFocus() || box.windowToken == null) return
+            val list = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(8), dp(6), dp(8)); background = shape(C.panel, 18, C.border)
+                elevation = dp(12).toFloat()
+            }
+            val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(2), dp(4), dp(4)) }
+            head.addView(text("RECENT SEARCHES", 11f, C.soft, 800).apply { letterSpacing = 0.1f }, lp(0, -2, 1f))
+            val wipe = text("Clear all", 12f, C.muted, 600).apply { setPadding(dp(10), dp(8), dp(10), dp(8)); background = focusable(C.panel, 12, null) }
+            clickable(wipe) { saveRecentSearches(emptyList()); popup?.dismiss() }
+            head.addView(wipe)
+            list.addView(head)
+            words.forEach { w ->
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                val pick = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0)
+                    background = focusable(C.panel, 12, null)
+                    addView(icon(R.drawable.ic_history, C.muted, 16))
+                    addView(text(w, 15f, C.text, 600).apply { setPadding(dp(12), 0, 0, 0) }, lp(0, -2, 1f))
+                }
+                clickable(pick) {
+                    popup?.dismiss()
+                    input.setText(w); input.setSelection(w.length)
+                    rememberSearch(w)
+                    onSubmit?.invoke(w)
+                }
+                row.addView(pick, lp(0, dp(44), 1f))
+                val del = FrameLayout(this).apply {
+                    contentDescription = "Remove $w"; background = focusable(C.panel, 18, null)
+                    addView(icon(R.drawable.ic_close, C.muted, 13), FrameLayout.LayoutParams(dp(13), dp(13), Gravity.CENTER))
+                }
+                clickable(del) { saveRecentSearches(recentSearches().filterNot { it.equals(w, true) }); popup?.dismiss(); input.requestFocus(); showRecent() }
+                row.addView(del, lp(dp(36), dp(36), l = 4))
+                list.addView(row)
+            }
+            popup = PopupWindow(list, box.width.coerceAtLeast(dp(260)), ViewGroup.LayoutParams.WRAP_CONTENT, false).apply {
+                inputMethodMode = PopupWindow.INPUT_METHOD_NEEDED
+                isOutsideTouchable = true
+                setBackgroundDrawable(null)
+                setOnDismissListener { if (popup === this) popup = null }
+                showAsDropDown(box, 0, dp(8))
+            }
+        }
+
+        input = EditText(this).apply {
             this.hint = hint; setHintTextColor(C.muted); setTextColor(C.text); textSize = 14f
-            background = null; setSingleLine(true); setPadding(dp(10), 0, 0, 0)
+            background = null; setSingleLine(true); setPadding(dp(10), 0, dp(6), 0)
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
                 override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-                override fun afterTextChanged(s: Editable?) = onChange(s?.toString().orEmpty().trim())
+                override fun afterTextChanged(s: Editable?) {
+                    val q = s?.toString().orEmpty().trim()
+                    clear.visibility = if (s.isNullOrEmpty()) View.GONE else View.VISIBLE
+                    main.removeCallbacks(saveLater)
+                    if (q.isEmpty()) showRecent() else {
+                        popup?.dismiss()
+                        if (onSubmit == null) main.postDelayed(saveLater, 2500) // live filters: remember after a pause
+                    }
+                    onChange(q)
+                }
             })
-            if (onSubmit != null) setOnEditorActionListener { v, id, _ -> if (id == EditorInfo.IME_ACTION_SEARCH) { onSubmit(v.text.toString().trim()); true } else false }
+            setOnEditorActionListener { v, id, _ ->
+                if (id == EditorInfo.IME_ACTION_SEARCH || id == EditorInfo.IME_ACTION_DONE) {
+                    val q = v.text.toString().trim()
+                    main.removeCallbacks(saveLater); rememberSearch(q); popup?.dismiss()
+                    onSubmit?.invoke(q); onSubmit != null
+                } else false
+            }
+            setOnFocusChangeListener { _, has -> if (has) post { showRecent() } else main.postDelayed({ if (popup?.isFocusable != true) popup?.dismiss() }, 150) }
+            setOnClickListener { if (popup == null) showRecent() }
+            // TV remote: Down moves into the recent list.
+            setOnKeyListener { _, code, ev ->
+                val pw = popup
+                if (code == KeyEvent.KEYCODE_DPAD_DOWN && ev.action == KeyEvent.ACTION_DOWN && pw != null && pw.isShowing) {
+                    pw.isFocusable = true; pw.update()
+                    pw.contentView.post { (pw.contentView as? ViewGroup)?.getChildAt(1)?.let { (it as ViewGroup).getChildAt(0).requestFocus() } }
+                    true
+                } else false
+            }
+        }
+        clickable(clear) {
+            input.setText(""); input.requestFocus()
+            (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(input, 0)
         }
         box.addView(input, lp(0, -1, 1f))
+        box.addView(clear, lp(dp(32), dp(32)))
+        box.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {}
+            override fun onViewDetachedFromWindow(v: View) { main.removeCallbacks(saveLater); popup?.dismiss() }
+        })
         return box to input
     }
 
@@ -401,9 +510,16 @@ class MainActivity : Activity() {
     }
 
     private fun searchDialog() {
-        val input = EditText(this).apply { hint = "Channel, movie or series"; setSingleLine(true) }
-        AlertDialog.Builder(this).setTitle("Search").setView(input).setPositiveButton("Search") { _, _ -> globalSearch(input.text.toString().trim()) }
-            .setNegativeButton("Cancel", null).show()
+        val input = EditText(this).apply { hint = "Channel, movie or series"; setSingleLine(true); imeOptions = EditorInfo.IME_ACTION_SEARCH }
+        val recent = recentSearches()
+        val b = AlertDialog.Builder(this).setTitle("Search").setView(input)
+            .setPositiveButton("Search") { _, _ -> input.text.toString().trim().let { rememberSearch(it); globalSearch(it) } }
+            .setNegativeButton("Cancel", null)
+        if (recent.isNotEmpty()) b.setItems(recent.toTypedArray()) { _, i -> rememberSearch(recent[i]); globalSearch(recent[i]) }
+        val d = b.show()
+        input.setOnEditorActionListener { v, id, _ ->
+            if (id == EditorInfo.IME_ACTION_SEARCH) { d.dismiss(); v.text.toString().trim().let { rememberSearch(it); globalSearch(it) }; true } else false
+        }
     }
 
     private fun globalSearch(q: String) {
