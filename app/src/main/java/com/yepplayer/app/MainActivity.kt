@@ -66,6 +66,7 @@ class MainActivity : Activity() {
     private var refreshList: (() -> Unit)? = null
     private var resumePreview: (() -> Unit)? = null
     private var clockTick: Runnable? = null
+    private var heroTick: Runnable? = null
     private var preview: ExoPlayer? = null
     private val prefs by lazy { getSharedPreferences("yepplayer", MODE_PRIVATE) }
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -313,6 +314,7 @@ class MainActivity : Activity() {
         refreshList = null
         resumePreview = null
         clockTick?.let { main.removeCallbacks(it) }; clockTick = null
+        heroTick?.let { main.removeCallbacks(it) }; heroTick = null
         val root = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(C.rail); fitsSystemWindows = true } // keep clear of status/navigation bars (Android 15 edge-to-edge)
         val rail = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
@@ -358,7 +360,12 @@ class MainActivity : Activity() {
         return when { h < 12 -> "Good morning"; h < 18 -> "Good afternoon"; else -> "Good evening" }
     }
 
+    /** Home: the full-screen suggestions page on TVs and tablets (unless switched off), the classic page otherwise. */
     private fun home() {
+        if (medium && profile != null && prefs.getBoolean("start_page", true)) startPage() else classicHome()
+    }
+
+    private fun classicHome() {
         val content = shell("home")
         back = null
         val scroll = ScrollView(this).apply { isFillViewport = true }
@@ -447,6 +454,272 @@ class MainActivity : Activity() {
         }
         tv.post { tv.requestFocus() } // the remote starts on Live TV
         page.addView(text("Only use streams and playlists you are authorised to access.", 11f, C.faint, 400, 2).apply { gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0) }, lp(-1, -2))
+    }
+
+
+    // ---------------------------------------------------------------- start page (full-screen suggestions)
+
+    private class Slide(
+        val tag: String, val tagColor: Int, val why: String, val title: String, var meta: String, var rating: String,
+        var plot: String, val play: String, var image: String, val item: MediaItem?, val siblings: List<MediaItem>, val live: Boolean
+    )
+
+    private fun ratingOf(r: String) = r.replace(',', '.').toDoubleOrNull() ?: 0.0
+
+    private fun startPage() {
+        val content = shell("home")
+        back = null
+        val frame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        content.addView(frame, lp(-1, -1))
+
+        val backdrop = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageResource(R.drawable.home_glow) }
+        frame.addView(backdrop, FrameLayout.LayoutParams(-1, -1))
+        val pv = PlayerView(this).apply { useController = false; setShutterBackgroundColor(Color.TRANSPARENT); visibility = View.INVISIBLE; isFocusable = false }
+        frame.addView(pv, FrameLayout.LayoutParams(-1, -1))
+        val shade = Color.rgb(5, 4, 10)
+        frame.addView(View(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.argb(235, 5, 4, 10), Color.argb(170, 5, 4, 10), Color.argb(0, 5, 4, 10)))
+        }, FrameLayout.LayoutParams(-1, -1))
+        frame.addView(View(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(Color.argb(245, Color.red(shade), Color.green(shade), Color.blue(shade)), Color.argb(0, 5, 4, 10)))
+        }, FrameLayout.LayoutParams(-1, dp(260), Gravity.BOTTOM))
+
+        // Top bar: greeting + clock, search.
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(36), dp(22), dp(28), 0) }
+        top.addView(text(SpannableStringBuilder("YepPlayer").apply { setSpan(ForegroundColorSpan(C.accent), 0, 3, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }, 22f, Color.WHITE, 800))
+        val clock = text("${greeting()} · ${timeFmt.format(Date())}", 13f, Color.rgb(214, 210, 230)).apply { setPadding(dp(14), 0, 0, 0) }
+        top.addView(clock, lp(0, -2, 1f))
+        top.addView(iconButton(R.drawable.ic_search, "Search", 46, Color.argb(215, 26, 22, 41)) { searchDialog() })
+        frame.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        clockTick = object : Runnable { override fun run() { clock.text = "${greeting()} · ${timeFmt.format(Date())}"; main.postDelayed(this, 20_000) } }.also { main.postDelayed(it, 20_000) }
+
+        // Suggestion text + buttons.
+        val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(48), 0, 0, 0) }
+        val tags = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val tag = badge("", C.accent).apply { textSize = 11f; setPadding(dp(10), dp(5), dp(10), dp(5)) }
+        val why = text("", 12f, Color.WHITE, 700).apply { setPadding(dp(10), dp(5), dp(10), dp(5)); background = shape(Color.argb(215, 26, 22, 41), 6) }
+        tags.addView(tag); tags.addView(why, lp(-2, -2, l = 8))
+        info.addView(tags)
+        val title = text("", 40f, Color.WHITE, 900, 2).apply { setLineSpacing(0f, 0.95f) }
+        info.addView(title, lp(dp(620), -2, t = 12))
+        val metaRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val meta = text("", 15f, Color.rgb(233, 230, 245), 700)
+        val rating = text("", 13f, C.gold, 800).apply { setPadding(dp(10), dp(3), dp(10), dp(3)); background = shape(Color.TRANSPARENT, 13, C.gold, 2) }
+        metaRow.addView(meta); metaRow.addView(rating, lp(-2, -2, l = 12))
+        info.addView(metaRow, lp(-2, -2, t = 10))
+        val plot = text("", 15f, Color.rgb(214, 210, 230), 400, 3).apply { setLineSpacing(0f, 1.3f) }
+        info.addView(plot, lp(dp(560), -2, t = 10))
+
+        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val dark = Color.argb(215, 26, 22, 41)
+        fun round(label: String, desc: String, size: Int, onClick: () -> Unit) = FrameLayout(this).apply {
+            contentDescription = desc
+            background = focusable(dark, size / 2, null)
+            addView(text(label, 20f, Color.WHITE, 800).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, -1))
+            clickable(this, onClick)
+        }
+        // Round play button: accent gradient with an outlined triangle; white frame when the remote is on it.
+        val play = FrameLayout(this).apply {
+            contentDescription = "Play"
+            val dim = Color.rgb((Color.red(C.accent) * 0.62).toInt(), (Color.green(C.accent) * 0.62).toInt(), (Color.blue(C.accent) * 0.62).toInt())
+            val light = Color.rgb(Color.red(C.accent) + (255 - Color.red(C.accent)) / 3, Color.green(C.accent) + (255 - Color.green(C.accent)) / 3, Color.blue(C.accent) + (255 - Color.blue(C.accent)) / 3)
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(light, C.accent, dim)).apply { shape = GradientDrawable.OVAL }
+            foreground = StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(3), Color.WHITE) })
+                addState(intArrayOf(), GradientDrawable().apply { shape = GradientDrawable.OVAL })
+            }
+            elevation = dp(8).toFloat()
+            addView(ImageView(this@MainActivity).apply { setImageResource(R.drawable.ic_play_outline); setPadding(dp(3), 0, 0, 0) }, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.CENTER))
+        }
+        val playLabel = text("", 17f, Color.WHITE, 800)
+        var index = 0
+        val slides = mutableListOf<Slide>()
+        lateinit var show: (Int) -> Unit
+        val prev = round("‹", "Previous", 52) { if (slides.size > 1) show((index - 1 + slides.size) % slides.size) }
+        val infoBtn = round("i", "More information", 52) {}
+        val next = round("›", "Next", 52) { if (slides.size > 1) show((index + 1) % slides.size) }
+        buttons.addView(prev, lp(dp(52), dp(52)))
+        buttons.addView(play, lp(dp(76), dp(76), l = 14))
+        buttons.addView(playLabel, lp(-2, -2, l = 14, r = 8))
+        buttons.addView(infoBtn, lp(dp(52), dp(52), l = 8))
+        buttons.addView(next, lp(dp(52), dp(52), l = 12))
+        info.addView(buttons, lp(-2, -2, t = 22))
+        frame.addView(info, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER_VERTICAL or Gravity.START).apply { bottomMargin = dp(70) })
+
+        // Dots, caption, bottom buttons.
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(0, 0, 0, dp(22)) }
+        val dots = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        bottom.addView(dots, lp(-2, dp(6)))
+        bottom.addView(text("Suggestions mix what you watch most with what's new on your playlist", 12f, C.muted).apply { gravity = Gravity.CENTER }, lp(-2, -2, t = 14))
+        val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        fun navBtn(res: Int, label: String, go: () -> Unit) {
+            val b = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(dp(20), 0, dp(22), 0)
+                background = StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_focused), shape(Color.argb(235, 26, 22, 41), 25, Color.WHITE, 3))
+                    addState(intArrayOf(), shape(Color.argb(225, 26, 22, 41), 25, C.border))
+                }
+                addView(icon(res, C.soft, 18))
+                addView(text(label, 15f, Color.WHITE, 700).apply { setPadding(dp(10), 0, 0, 0) })
+            }
+            clickable(b, go)
+            nav.addView(b, lp(-2, dp(50), l = 6, r = 6))
+        }
+        navBtn(R.drawable.ic_live, "Live TV") { load("live") }
+        navBtn(R.drawable.ic_movie, "Movies") { load("vod") }
+        navBtn(R.drawable.ic_series, "Series") { load("series") }
+        navBtn(R.drawable.ic_sport, "Sports") { sports() }
+        navBtn(R.drawable.ic_star, "Favourites") { browse("favs", favourites(), "Favourites") }
+        bottom.addView(nav, lp(-2, -2, t = 14))
+        frame.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+
+        // ---- showing a slide
+        val welcome = Slide("YEPPLAYER", C.accent, "Welcome back", "Live TV, films and series", "Your suggestions are loading", "",
+            "Watch a few channels, films or series and this page fills itself with suggestions.", "Live TV", "", null, emptyList(), false)
+        fun stopVideo() { stopPreview(); pv.player = null; pv.visibility = View.INVISIBLE }
+        fun startVideo(item: MediaItem) {
+            stopVideo()
+            if (prefs.getString("pin", null) != null && isRestricted(item)) return
+            var triedTs = false
+            val http = DefaultHttpDataSource.Factory().setUserAgent(Source.USER_AGENT).setAllowCrossProtocolRedirects(true)
+            val pl = ExoPlayer.Builder(this).setMediaSourceFactory(DefaultMediaSourceFactory(Source.guarded(DefaultDataSource.Factory(this, http)))).build()
+            pl.addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    if (!triedTs && item.url.endsWith(".m3u8")) { triedTs = true; pl.setMediaItem(ExoItem.fromUri(item.url.removeSuffix(".m3u8") + ".ts")); pl.prepare(); pl.playWhenReady = true }
+                    else pv.visibility = View.INVISIBLE
+                }
+                override fun onRenderedFirstFrame() { pv.visibility = View.VISIBLE }
+            })
+            preview = pl; pv.player = pl
+            pl.setMediaItem(ExoItem.fromUri(item.url)); pl.prepare(); pl.playWhenReady = true
+        }
+        fun paintDots() {
+            dots.removeAllViews()
+            val n = slides.size.coerceAtLeast(1)
+            for (j in 0 until n) dots.addView(View(this).apply { background = shape(if (j == index) Color.WHITE else Color.argb(90, 255, 255, 255), 3) }, lp(dp(if (j == index) 34 else 10), dp(5), l = 4, r = 4))
+        }
+        fun fill(s: Slide) {
+            tag.text = s.tag; tag.background = shape(s.tagColor, 6)
+            why.text = s.why; why.visibility = if (s.why.isBlank()) View.GONE else View.VISIBLE
+            title.text = s.title
+            meta.text = s.meta
+            rating.text = "★ ${s.rating}"; rating.visibility = if (s.rating.isBlank() || ratingOf(s.rating) <= 0.0) View.GONE else View.VISIBLE
+            plot.text = s.plot
+            playLabel.text = s.play
+            infoBtn.visibility = if (s.item == null) View.GONE else View.VISIBLE
+            backdrop.setImageResource(R.drawable.home_glow)
+            backdrop.tag = s.image
+            if (s.image.isNotBlank()) loadLogo(s.image, backdrop, 640)
+        }
+        show = { i ->
+            index = i
+            val s = slides.getOrNull(i) ?: welcome
+            fill(s)
+            if (s.live && s.item != null) startVideo(s.item) else stopVideo()
+            paintDots()
+        }
+        fun current() = slides.getOrNull(index)
+        clickable(play) {
+            val s = current()
+            val item = s?.item
+            when {
+                item == null -> load("live")
+                s!!.live -> withPin(item) { playLive(item, s.siblings) }
+                else -> openItem(item, s!!.siblings) { home() }
+            }
+        }
+        infoBtn.setOnClickListener {
+            val s = current() ?: return@setOnClickListener
+            val item = s.item ?: return@setOnClickListener
+            if (item.kind == "live") { withPin(item) { showEpg(item, s.siblings) }; return@setOnClickListener }
+            AlertDialog.Builder(this).setTitle(s.title).setMessage(listOf(s.meta, if (s.rating.isNotBlank()) "★ ${s.rating}" else "", s.plot).filter { it.isNotBlank() }.joinToString("\n\n"))
+                .setPositiveButton(s.play) { _, _ -> play.performClick() }.setNegativeButton("Close", null).show()
+        }
+        show(0)
+        play.post { play.requestFocus() } // the remote starts on Play
+        resumePreview = { if (frame.isAttachedToWindow) { show(index); play.requestFocus() } }
+
+        // Auto-advance every 9 seconds while the remote rests on Play.
+        heroTick = object : Runnable {
+            override fun run() {
+                if (slides.size > 1 && play.isFocused && hasWindowFocus()) show((index + 1) % slides.size)
+                main.postDelayed(this, 9_000)
+            }
+        }.also { main.postDelayed(it, 9_000) }
+
+        // ---- building the suggestions (in the background)
+        val p = profile ?: return
+        fun add(s: Slide) {
+            if (!frame.isAttachedToWindow) return
+            slides.add(s)
+            if (slides.size == 1) show(0) else paintDots()
+        }
+        fun withDetails(s: Slide) {
+            val item = s.item ?: return
+            if (p.type != "xtream" || item.kind !in setOf("vod", "series")) return
+            epgPool.execute {
+                val d = detailsCache[item.kind + item.id] ?: try { Source.details(p, item) } catch (_: Exception) { null }
+                runOnUiThread {
+                    detailsCache[item.kind + item.id] = d
+                    if (d == null) return@runOnUiThread
+                    if (d.plot.isNotBlank()) s.plot = d.plot
+                    val bits = listOf(d.genre.split(',', '/').map { it.trim() }.filter { it.isNotBlank() }.take(3).joinToString(" · "), d.year, d.duration.takeIf { item.kind == "vod" }.orEmpty()).filter { it.isNotBlank() }
+                    if (bits.isNotEmpty()) s.meta = bits.joinToString(" · ")
+                    if (s.rating.isBlank() && d.rating.isNotBlank()) s.rating = d.rating
+                    val img = d.backdrop.ifBlank { d.cover }
+                    if (img.isNotBlank()) s.image = img
+                    if (current() === s && frame.isAttachedToWindow) fill(s)
+                }
+            }
+        }
+        pool.execute {
+            fun list(k: String): List<MediaItem> = cache[k] ?: try { Source.load(p, k).also { l -> runOnUiThread { cache[k] = l } } } catch (_: Exception) { emptyList() }
+            // 1. Live: last channel watched, or UK BBC One.
+            val live = list("live")
+            homeChannel(live)?.let { ch ->
+                val now = try { if (p.type == "xtream") Source.epg(p, ch.id).firstOrNull { it.isNow(System.currentTimeMillis() / 1000) } else null } catch (_: Exception) { null }
+                val wasLast = prefs.getString("last_live_url", null) == ch.url
+                val s = Slide("LIVE NOW", C.red, if (wasLast) "Your last channel" else "Live on your playlist", ch.name,
+                    now?.let { "${it.title} · ${timeFmt.format(Date(it.start * 1000))} – ${timeFmt.format(Date(it.stop * 1000))}" } ?: ch.category, "",
+                    now?.description?.takeIf { it.isNotBlank() } ?: "The live picture plays right here. Press Play for full screen.", "Watch live", "", ch, live, true)
+                runOnUiThread { add(s) }
+            }
+            // 2. Continue watching: the last film or episode you stopped part-way.
+            recent().firstOrNull { it.kind == "vod" || it.kind == "episode" }?.let { r ->
+                val pos = prefs.getLong(Source.resumeKey(r.url), 0L)
+                val dur = prefs.getLong(Source.durationKey(r.url), 0L)
+                if (pos > 60_000 && (dur <= 0 || pos < dur - 120_000)) {
+                    val left = if (dur > 0) " · ${((dur - pos) / 60_000).coerceAtLeast(1)} min left" else ""
+                    val s = Slide("CONTINUE", C.accent, "Pick up where you stopped$left", r.name, r.category, r.rating, "Carry on watching from where you stopped.", "Resume", r.logoUrl, r, listOf(r), false)
+                    runOnUiThread { add(s); withDetails(s) }
+                }
+            }
+            if (p.type == "xtream") {
+                // 3. New films and series with a good rating.
+                fun fresh(k: String, n: Int): List<MediaItem> {
+                    val hidden = hiddenGroups(k)
+                    return list(k).asSequence().filter { it.category !in hidden && !isRestricted(it) && ratingOf(it.rating) >= 7.0 }
+                        .sortedByDescending { it.added }.take(n).toList()
+                }
+                val movies = fresh("vod", 2)
+                val shows = fresh("series", 2)
+                val mixed = listOfNotNull(movies.getOrNull(0), shows.getOrNull(0), movies.getOrNull(1), shows.getOrNull(1))
+                mixed.forEach { m ->
+                    val isMovie = m.kind == "vod"
+                    val s = Slide(if (isMovie) "NEW MOVIE" else "NEW SERIES", if (isMovie) Color.rgb(43, 182, 115) else Color.rgb(47, 123, 255),
+                        "Recently added", m.name, m.category, m.rating, "", if (isMovie) "Play" else "Episodes", m.logoUrl, m, listOf(m), false)
+                    runOnUiThread { add(s); withDetails(s) }
+                }
+                // 4. Live sport from the guide (slower, so on its own thread).
+                Thread {
+                    val now = System.currentTimeMillis() / 1000
+                    val ev = try { Sports.load(p, live).firstOrNull { it.start <= now && it.stop > now } } catch (_: Exception) { null } ?: return@Thread
+                    val s = Slide("SPORT LIVE", C.red, "From the Sports guide", ev.title, "${ev.sport} · ${ev.channel.name}", "",
+                        "Live now until ${timeFmt.format(Date(ev.stop * 1000))}.", "Watch live", "", ev.channel, live, true)
+                    runOnUiThread { add(s) }
+                }.start()
+            }
+        }
     }
 
     // ---------------------------------------------------------------- home TV box
@@ -1586,7 +1859,7 @@ class MainActivity : Activity() {
     }
 
     private fun settings() {
-        val options = arrayOf("Playlists", "Account information", "Hide / show groups", "Arrange order", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "Colours", "About YepPlayer")
+        val options = arrayOf("Playlists", "Account information", "Hide / show groups", "Arrange order", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "Colours", "Home screen style", "About YepPlayer")
         AlertDialog.Builder(this).setTitle("Settings").setItems(options) { _, which ->
             when (which) {
                 0 -> configure()
@@ -1597,6 +1870,9 @@ class MainActivity : Activity() {
                 5 -> browse("recent", recent(), "Recently watched")
                 7 -> networkSafety()
                 8 -> colours()
+                9 -> AlertDialog.Builder(this).setTitle("Home screen style").setSingleChoiceItems(arrayOf("Full-screen suggestions", "Classic tiles"), if (prefs.getBoolean("start_page", true)) 0 else 1) { d, w ->
+                    prefs.edit().putBoolean("start_page", w == 0).apply(); d.dismiss(); home()
+                }.setNegativeButton("Cancel", null).show()
                 6 -> { cache.clear(); nowCache.clear(); detailsCache.clear(); logoCache.evictAll(); synchronized(failedLogos) { failedLogos.clear() }; prefs.edit().remove("acct_time|${profile?.base}").apply(); toast("Playlist data will reload") }
                 else -> AlertDialog.Builder(this).setTitle("YepPlayer ${packageManager.getPackageInfo(packageName, 0).versionName}")
                     .setMessage("A personal IPTV player for authorised playlists.\n\nTips: long-press an item for more options. In the player, use the channel buttons (or the remote's up/down keys) to zap between channels.")

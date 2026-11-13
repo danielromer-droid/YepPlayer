@@ -145,7 +145,8 @@ object Source {
         fun s(vararg keys: String) = keys.map { info.optString(it) }.firstOrNull { it.isNotBlank() && it != "null" }.orEmpty()
         return Details(
             s("plot", "description"), s("releasedate", "releaseDate", "year").take(4), s("duration"),
-            s("genre"), s("rating"), s("movie_image", "cover", "cover_big")
+            s("genre"), s("rating"), s("movie_image", "cover", "cover_big"),
+            (info.optJSONArray("backdrop_path")?.optString(0)?.takeIf { it.startsWith("http") } ?: s("backdrop_path").takeIf { it.startsWith("http") }).orEmpty()
         )
     }
 
