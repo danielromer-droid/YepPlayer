@@ -1697,11 +1697,20 @@ class MainActivity : Activity() {
         if (groups.isEmpty()) { toast("Load a playlist first"); return }
         val hidden = hiddenGroups(kind).toMutableSet()
         val checked = BooleanArray(groups.size) { groups[it] !in hidden }
-        AlertDialog.Builder(this).setTitle("Show or hide ${kindTitle(kind)} groups")
+        val d = AlertDialog.Builder(this).setTitle("Show or hide ${kindTitle(kind)} groups")
             .setMultiChoiceItems(groups.toTypedArray(), checked) { _, which, isChecked -> if (isChecked) hidden.remove(groups[which]) else hidden.add(groups[which]) }
-            .setPositiveButton("Save") { _, _ -> prefs.edit().putStringSet(hiddenKey(kind), hidden).apply(); after() }
-            .setNeutralButton("Show all") { _, _ -> prefs.edit().putStringSet(hiddenKey(kind), emptySet()).remove("hidden_groups").apply(); after() }
+            .setPositiveButton("Save") { _, _ -> prefs.edit().putStringSet(hiddenKey(kind), hidden).remove("hidden_groups").apply(); after() }
+            .setNeutralButton(if (hidden.isEmpty()) "Hide all" else "Show all", null)
             .setNegativeButton("Cancel", null).show()
+        // "Hide all" unticks every group (then tick the ones you want and Save); "Show all" ticks them all again. The dialog stays open.
+        val toggle = d.getButton(AlertDialog.BUTTON_NEUTRAL)
+        toggle.setOnClickListener {
+            val showAll = hidden.size == groups.size || toggle.text.toString() == "Show all"
+            hidden.clear(); if (!showAll) hidden.addAll(groups)
+            for (i in groups.indices) { checked[i] = showAll; d.listView.setItemChecked(i, showAll) }
+            toggle.text = if (showAll) "Hide all" else "Show all"
+            d.listView.setSelection(0); d.listView.requestFocus()
+        }
     }
 
     // ---------------------------------------------------------------- favourites & recent
