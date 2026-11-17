@@ -3,6 +3,7 @@ package com.yepplayer.app
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Build
 import android.os.Bundle
 import android.util.TypedValue
@@ -96,6 +97,19 @@ class PlayerActivity : Activity() {
             if (live) { setShowFastForwardButton(false); setShowRewindButton(false) }
         }
         root.addView(view, FrameLayout.LayoutParams(-1, -1))
+        // No yellow focus square on the player's buttons: a soft round glow instead.
+        fun softFocus(v: android.view.View) {
+            if (v is android.widget.ImageButton) {
+                if (android.os.Build.VERSION.SDK_INT >= 26) v.defaultFocusHighlightEnabled = false
+                v.background = StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.argb(70, 255, 255, 255)) })
+                    addState(intArrayOf(android.R.attr.state_pressed), GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.argb(90, 255, 255, 255)) })
+                    addState(intArrayOf(), GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.TRANSPARENT) })
+                }
+            } else if (v is android.view.ViewGroup) for (i in 0 until v.childCount) softFocus(v.getChildAt(i))
+            if (android.os.Build.VERSION.SDK_INT >= 26 && v !is android.widget.ImageButton) v.defaultFocusHighlightEnabled = false
+        }
+        softFocus(view)
 
         topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
