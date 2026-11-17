@@ -461,8 +461,18 @@ class MainActivity : Activity() {
 
     private class Slide(
         val tag: String, val tagColor: Int, val why: String, val title: String, var meta: String, var rating: String,
-        var plot: String, val play: String, var image: String, val item: MediaItem?, val siblings: List<MediaItem>, val live: Boolean
+        var plot: String, val play: String, var image: String, val item: MediaItem?, val siblings: List<MediaItem>, val live: Boolean,
+        val order: Int = 50 // lower comes first: top films/series, then continue watching, live, sport
     )
+
+    private val enRx = Regex("(^|[^a-z])(en|eng|english|anglais|uk|usa|us|gb|united kingdom)([^a-z]|$)", RegexOption.IGNORE_CASE)
+    private val frRx = Regex("(^|[^a-z])(fr|fra|french|fran[cç]ais|france|vf|vff|vfq|vostfr|truefrench)([^a-z]|$)", RegexOption.IGNORE_CASE)
+    private val topRx = Regex("top|popular|populaire|trending|tendance|box ?office|most watched|les plus vus|best of|meilleur", RegexOption.IGNORE_CASE)
+    /** "EN", "FR" or "" from the item's group and name, as providers label them (e.g. "EN | Netflix", "FR - Films VF"). */
+    private fun langOf(i: MediaItem): String {
+        val prefix = i.category.take(12) + " " + i.name.take(8)
+        return when { frRx.containsMatchIn(prefix) || frRx.containsMatchIn(i.category) -> "FR"; enRx.containsMatchIn(prefix) || enRx.containsMatchIn(i.category) -> "EN"; else -> "" }
+    }
 
     private fun ratingOf(r: String) = r.replace(',', '.').toDoubleOrNull() ?: 0.0
 
@@ -535,9 +545,10 @@ class MainActivity : Activity() {
         var index = 0
         val slides = mutableListOf<Slide>()
         lateinit var show: (Int) -> Unit
-        val prev = round("‹", "Previous", 52) { if (slides.size > 1) show((index - 1 + slides.size) % slides.size) }
+        var touched = false
+        val prev = round("‹", "Previous", 52) { touched = true; if (slides.size > 1) show((index - 1 + slides.size) % slides.size) }
         val infoBtn = round("i", "More information", 52) {}
-        val next = round("›", "Next", 52) { if (slides.size > 1) show((index + 1) % slides.size) }
+        val next = round("›", "Next", 52) { touched = true; if (slides.size > 1) show((index + 1) % slides.size) }
         buttons.addView(prev, lp(dp(52), dp(52)))
         buttons.addView(play, lp(dp(76), dp(76), l = 14))
         buttons.addView(playLabel, lp(-2, -2, l = 14, r = 8))
@@ -651,8 +662,14 @@ class MainActivity : Activity() {
         val p = profile ?: return
         fun add(s: Slide) {
             if (!frame.isAttachedToWindow) return
-            slides.add(s)
-            if (slides.size == 1) show(0) else paintDots()
+            val at = slides.indexOfFirst { it.order > s.order }.let { if (it < 0) slides.size else it }
+            slides.add(at, s)
+            when {
+                slides.size == 1 -> show(0)
+                at <= index && !touched && index == 0 -> show(0) // a better first suggestion arrived before the user moved
+                at <= index -> { index++; paintDots() }
+                else -> paintDots()
+            }
         }
         fun withDetails(s: Slide) {
             val item = s.item ?: return
@@ -681,7 +698,7 @@ class MainActivity : Activity() {
                 val wasLast = prefs.getString("last_live_url", null) == ch.url
                 val s = Slide("LIVE NOW", C.red, if (wasLast) "Your last channel" else "Live on your playlist", ch.name,
                     now?.let { "${it.title} · ${timeFmt.format(Date(it.start * 1000))} – ${timeFmt.format(Date(it.stop * 1000))}" } ?: ch.category, "",
-                    now?.description?.takeIf { it.isNotBlank() } ?: "The live picture plays right here. Press Play for full screen.", "Watch live", "", ch, live, true)
+                    now?.description?.takeIf { it.isNotBlank() } ?: "The live picture plays right here. Press Play for full screen.", "Watch live", "", ch, live, true, order = 20)
                 runOnUiThread { add(s) }
             }
             // 2. Continue watching: the last film or episode you stopped part-way.
@@ -690,24 +707,33 @@ class MainActivity : Activity() {
                 val dur = prefs.getLong(Source.durationKey(r.url), 0L)
                 if (pos > 60_000 && (dur <= 0 || pos < dur - 120_000)) {
                     val left = if (dur > 0) " · ${((dur - pos) / 60_000).coerceAtLeast(1)} min left" else ""
-                    val s = Slide("CONTINUE", C.accent, "Pick up where you stopped$left", r.name, r.category, r.rating, "Carry on watching from where you stopped.", "Resume", r.logoUrl, r, listOf(r), false)
+                    val s = Slide("CONTINUE", C.accent, "Pick up where you stopped$left", r.name, r.category, r.rating, "Carry on watching from where you stopped.", "Resume", r.logoUrl, r, listOf(r), false, order = 10)
                     runOnUiThread { add(s); withDetails(s) }
                 }
             }
             if (p.type == "xtream") {
-                // 3. New films and series with a good rating.
-                fun fresh(k: String, n: Int): List<MediaItem> {
+                // 3. First: English or French films and series from the provider's top / popular groups, then the best rated recent ones.
+                fun picks(k: String, n: Int): List<MediaItem> {
                     val hidden = hiddenGroups(k)
-                    return list(k).asSequence().filter { it.category !in hidden && !isRestricted(it) && ratingOf(it.rating) >= 7.0 }
-                        .sortedByDescending { it.added }.take(n).toList()
+                    val pool0 = list(k).filter { it.category !in hidden && !isRestricted(it) && langOf(it).isNotEmpty() }
+                    val top = pool0.filter { topRx.containsMatchIn(it.category) }
+                        .sortedWith(compareByDescending<MediaItem> { ratingOf(it.rating) }.thenByDescending { it.added })
+                    val fresh = pool0.asSequence().filter { ratingOf(it.rating) >= 7.0 }.sortedByDescending { it.added }.take(200)
+                        .sortedByDescending { ratingOf(it.rating) }.toList()
+                    // Mix English and French so both show up.
+                    val all = (top + fresh).distinctBy { it.id }
+                    val en = all.filter { langOf(it) == "EN" }; val fr = all.filter { langOf(it) == "FR" }
+                    return (0 until n).flatMap { listOfNotNull(en.getOrNull(it), fr.getOrNull(it)) }.distinctBy { it.id }.take(n)
                 }
-                val movies = fresh("vod", 2)
-                val shows = fresh("series", 2)
-                val mixed = listOfNotNull(movies.getOrNull(0), shows.getOrNull(0), movies.getOrNull(1), shows.getOrNull(1))
-                mixed.forEach { m ->
+                val movies = picks("vod", 4)
+                val shows = picks("series", 3)
+                val mixed = (0 until 4).flatMap { listOfNotNull(movies.getOrNull(it), shows.getOrNull(it)) }
+                mixed.forEachIndexed { n, m ->
                     val isMovie = m.kind == "vod"
-                    val s = Slide(if (isMovie) "NEW MOVIE" else "NEW SERIES", if (isMovie) Color.rgb(43, 182, 115) else Color.rgb(47, 123, 255),
-                        "Recently added", m.name, m.category, m.rating, "", if (isMovie) "Play" else "Episodes", m.logoUrl, m, listOf(m), false)
+                    val lang = if (langOf(m) == "FR") "French" else "English"
+                    val s = Slide(if (isMovie) "TOP MOVIE" else "TOP SERIES", if (isMovie) Color.rgb(43, 182, 115) else Color.rgb(47, 123, 255),
+                        "$lang · ${if (topRx.containsMatchIn(m.category)) "Most watched" else "Top rated, recently added"}", m.name, m.category, m.rating, "",
+                        if (isMovie) "Play" else "Episodes", m.logoUrl, m, listOf(m), false, order = n)
                     runOnUiThread { add(s); withDetails(s) }
                 }
                 // 4. Live sport from the guide (slower, so on its own thread).
@@ -715,7 +741,7 @@ class MainActivity : Activity() {
                     val now = System.currentTimeMillis() / 1000
                     val ev = try { Sports.load(p, live).firstOrNull { it.start <= now && it.stop > now } } catch (_: Exception) { null } ?: return@Thread
                     val s = Slide("SPORT LIVE", C.red, "From the Sports guide", ev.title, "${ev.sport} · ${ev.channel.name}", "",
-                        "Live now until ${timeFmt.format(Date(ev.stop * 1000))}.", "Watch live", "", ev.channel, live, true)
+                        "Live now until ${timeFmt.format(Date(ev.stop * 1000))}.", "Watch live", "", ev.channel, live, true, order = 30)
                     runOnUiThread { add(s) }
                 }.start()
             }
