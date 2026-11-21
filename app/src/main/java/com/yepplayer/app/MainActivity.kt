@@ -67,6 +67,7 @@ class MainActivity : Activity() {
     private var resumePreview: (() -> Unit)? = null
     private var clockTick: Runnable? = null
     private var heroTick: Runnable? = null
+    private var liveGroupName: String? = null // shown on the player's channel list
     private var preview: ExoPlayer? = null
     private val prefs by lazy { getSharedPreferences("yepplayer", MODE_PRIVATE) }
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -223,6 +224,14 @@ class MainActivity : Activity() {
             clickable(wipe) { saveRecentSearches(emptyList()); popup?.dismiss() }
             head.addView(wipe)
             list.addView(head)
+            val typeRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0)
+                background = focusable(C.panel, 12, null)
+                addView(text("⌨", 16f, C.soft, 800))
+                addView(text("Type a new search", 15f, C.soft, 800).apply { setPadding(dp(12), 0, 0, 0) }, lp(0, -2, 1f))
+            }
+            clickable(typeRow) { popup?.dismiss(); openKeyboard(input) }
+            list.addView(LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; addView(typeRow, lp(0, dp(44), 1f)) })
             words.forEach { w ->
                 val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
                 val pick = LinearLayout(this).apply {
@@ -287,9 +296,18 @@ class MainActivity : Activity() {
             // TV remote: Down moves into the recent list.
             setOnKeyListener { _, code, ev ->
                 val pw = popup
-                // TV remote OK (or Enter on an empty box): always bring up the on-screen keyboard.
+                // TV remote OK (or Enter on an empty box): show the last searches first (top row types a new one); no history -> keyboard.
                 val ok = code == KeyEvent.KEYCODE_DPAD_CENTER || (code == KeyEvent.KEYCODE_ENTER && input.text.isEmpty())
-                if (ok && ev.action == KeyEvent.ACTION_UP) { openKeyboard(input); true }
+                if (ok && ev.action == KeyEvent.ACTION_UP) {
+                    if (input.text.isEmpty() && recentSearches().isNotEmpty()) {
+                        if (popup?.isShowing != true) showRecent()
+                        popup?.let { p2 ->
+                            p2.isFocusable = true; p2.update()
+                            p2.contentView.post { (p2.contentView as? ViewGroup)?.getChildAt(1)?.let { (it as ViewGroup).getChildAt(0).requestFocus() } }
+                        } ?: openKeyboard(input)
+                    } else openKeyboard(input)
+                    true
+                }
                 else if (ok) true else if (code == KeyEvent.KEYCODE_DPAD_DOWN && ev.action == KeyEvent.ACTION_DOWN && pw != null && pw.isShowing) {
                     pw.isFocusable = true; pw.update()
                     pw.contentView.post { (pw.contentView as? ViewGroup)?.getChildAt(1)?.let { (it as ViewGroup).getChildAt(0).requestFocus() } }
@@ -315,6 +333,7 @@ class MainActivity : Activity() {
         resumePreview = null
         clockTick?.let { main.removeCallbacks(it) }; clockTick = null
         heroTick?.let { main.removeCallbacks(it) }; heroTick = null
+        liveGroupName = null
         val root = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(C.rail); fitsSystemWindows = true } // keep clear of status/navigation bars (Android 15 edge-to-edge)
         val rail = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
@@ -1190,6 +1209,7 @@ class MainActivity : Activity() {
 
         render = {
             val g = groups.getOrNull(groupIndex)?.name ?: allLabel
+            liveGroupName = when (kind) { "live" -> g; "favs" -> "Favourites"; "recent" -> "Recently watched"; else -> liveGroupName }
             var list = when (g) {
                 allLabel -> base
                 "Favourites" -> if (specials.isNotEmpty()) favourites().filter { it.kind == kind } else base.filter { it.category == g }
@@ -1802,7 +1822,8 @@ class MainActivity : Activity() {
             .putExtra("names", list.map { it.name }.toTypedArray())
             .putExtra("ids", list.map { it.id }.toTypedArray())
             .putExtra("nums", list.mapIndexed { n, c -> if (c.num > 0) c.num else n + 1 }.toIntArray())
-            .putExtra("index", i))
+            .putExtra("index", i)
+            .putExtra("group", liveGroupName ?: "All channels"))
     }
 
     private fun epgDetails(item: MediaItem, e: EpgEntry, siblings: List<MediaItem>?) {

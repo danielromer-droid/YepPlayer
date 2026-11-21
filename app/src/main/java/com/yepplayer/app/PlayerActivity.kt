@@ -61,6 +61,10 @@ class PlayerActivity : Activity() {
     private lateinit var nowBar: View
     private lateinit var nowTrack: FrameLayout
     private val epgPool = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var panel: LinearLayout? = null
+    private var panelList: android.widget.ListView? = null
+    private var panelNow: TextView? = null
+    private val panelHide = Runnable { hidePanel() }
     private val timeFmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
     private var index = 0
     private var live = false
@@ -170,6 +174,7 @@ class PlayerActivity : Activity() {
         if (urls.size > 1) infoCard.addView(roundIcon(R.drawable.ic_down, "Next channel") { zap(1) })
         // Sits above the player's own seek/controls bar.
         root.addView(infoCard, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(24), 0, dp(24), dp(84)) })
+        if (live && urls.size > 1) root.addView(buildPanel(), FrameLayout.LayoutParams(dp(440), -1, Gravity.START))
 
         spinner = ProgressBar(this).apply { isIndeterminate = true; visibility = View.GONE }
         root.addView(spinner, FrameLayout.LayoutParams(dp(56), dp(56), Gravity.CENTER))
@@ -356,6 +361,99 @@ class PlayerActivity : Activity() {
         e.apply()
     }
 
+    // ---------------------------------------------------------------- channel list over the picture (Up / Down)
+
+    private fun buildPanel(): View {
+        val group = intent.getStringExtra("group") ?: "Channels"
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(26), dp(24), dp(26), dp(18)); visibility = View.GONE
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.argb(248, 8, 14, 22), Color.argb(235, 8, 14, 22), Color.argb(0, 8, 14, 22)))
+        }
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(TextView(this).apply { text = if (group == "Favourites") "★" else "▦"; textSize = 18f; setTextColor(C.gold) })
+        head.addView(TextView(this).apply { text = group; textSize = 20f; setTextColor(Color.WHITE); typeface = android.graphics.Typeface.DEFAULT_BOLD; setPadding(dp(10), 0, dp(10), 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(TextView(this).apply { text = "${urls.size} channels"; textSize = 13f; setTextColor(C.muted) })
+        box.addView(head)
+        box.addView(TextView(this).apply { text = "▲▼ choose · OK watch · Back close"; textSize = 12f; setTextColor(C.muted); setPadding(0, dp(6), 0, dp(10)) })
+        val adapter = object : android.widget.BaseAdapter() {
+            override fun getCount() = urls.size
+            override fun getItem(position: Int) = names[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup?): View {
+                val row = (convertView as? LinearLayout) ?: LinearLayout(this@PlayerActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0)
+                    addView(TextView(this@PlayerActivity).apply { textSize = 13f; setTextColor(C.faint); gravity = Gravity.END }, LinearLayout.LayoutParams(dp(40), -2).apply { rightMargin = dp(12) })
+                    addView(TextView(this@PlayerActivity).apply { textSize = 15f; setTextColor(Color.WHITE); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; typeface = android.graphics.Typeface.DEFAULT_BOLD }, LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(TextView(this@PlayerActivity).apply { text = "ON NOW"; textSize = 10f; setTextColor(Color.WHITE); typeface = android.graphics.Typeface.DEFAULT_BOLD; setPadding(dp(6), dp(3), dp(6), dp(3)); background = GradientDrawable().apply { setColor(C.red); cornerRadius = dp(5).toFloat() } })
+                    layoutParams = android.widget.AbsListView.LayoutParams(-1, dp(56))
+                }
+                (row.getChildAt(0) as TextView).text = nums.getOrNull(position)?.toString() ?: "${position + 1}"
+                (row.getChildAt(1) as TextView).text = names[position]
+                row.getChildAt(2).visibility = if (position == index) View.VISIBLE else View.GONE
+                return row
+            }
+        }
+        val list = android.widget.ListView(this).apply {
+            divider = null; dividerHeight = dp(4); this.adapter = adapter; isVerticalScrollBarEnabled = false
+            selector = StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(Color.argb(46, Color.red(C.accent), Color.green(C.accent), Color.blue(C.accent))); cornerRadius = dp(12).toFloat(); setStroke(dp(3), Color.WHITE) })
+                addState(intArrayOf(), GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(12).toFloat() })
+            }
+            setDrawSelectorOnTop(true)
+        }
+        val now = TextView(this).apply { textSize = 13f; setTextColor(C.highlight); setPadding(dp(4), dp(10), 0, 0); maxLines = 2 }
+        box.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
+        box.addView(now)
+        list.setOnItemClickListener { _, _, position, _ ->
+            if (position != index) { index = position; triedFallback = false; prefs.edit().putString("last_channel_url", urls[index]).apply(); play(urls[index]) }
+            adapter.notifyDataSetChanged(); hidePanel()
+        }
+        list.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, v: View?, position: Int, id: Long) { touchPanel(); showPanelNow(position) }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+        panel = box; panelList = list; panelNow = now
+        return box
+    }
+
+    private fun showPanelNow(position: Int) {
+        val label = panelNow ?: return
+        label.text = ""
+        val id = ids.getOrNull(position) ?: return
+        val p = Source.readProfile(prefs) ?: return
+        if (p.type != "xtream") return
+        epgPool.execute {
+            val cur = try { Source.epg(p, id).firstOrNull { it.isNow() } } catch (_: Exception) { null }
+            runOnUiThread { if (panelList?.selectedItemPosition == position && cur != null) label.text = "NOW · ${timeFmt.format(java.util.Date(cur.start * 1000))}  ${cur.title}" }
+        }
+    }
+
+    private fun touchPanel() { view.removeCallbacks(panelHide); view.postDelayed(panelHide, 10_000) }
+
+    private fun showPanel() {
+        val box = panel ?: return
+        view.hideController()
+        (panelList?.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()
+        box.visibility = View.VISIBLE
+        panelList?.let { l -> l.requestFocus(); l.setSelection(index); showPanelNow(index) }
+        touchPanel()
+    }
+
+    private fun hidePanel() {
+        view.removeCallbacks(panelHide)
+        panel?.visibility = View.GONE
+        view.requestFocus()
+    }
+
+    private val panelOpen get() = panel?.visibility == View.VISIBLE
+
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (panelOpen) { hidePanel(); return } // Back closes the channel list and stays on the full-screen picture
+        super.onBackPressed()
+    }
+
     private fun zap(delta: Int) {
         if (urls.size < 2) return
         index = (index + delta + urls.size) % urls.size
@@ -380,8 +478,10 @@ class PlayerActivity : Activity() {
         if (urls.size > 1) when (keyCode) {
             KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP -> { zap(1); return true }
             KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN -> { zap(-1); return true }
-            KeyEvent.KEYCODE_DPAD_UP -> if (!view.isControllerFullyVisible) { zap(1); return true }
-            KeyEvent.KEYCODE_DPAD_DOWN -> if (!view.isControllerFullyVisible) { zap(-1); return true }
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> if (!panelOpen && !view.isControllerFullyVisible) {
+                if (panel != null) showPanel() else zap(if (keyCode == KeyEvent.KEYCODE_DPAD_UP) 1 else -1)
+                return true
+            }
         }
         return super.onKeyDown(keyCode, event)
     }
