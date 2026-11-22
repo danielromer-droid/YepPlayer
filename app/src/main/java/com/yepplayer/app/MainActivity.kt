@@ -1106,6 +1106,8 @@ class MainActivity : Activity() {
         }
         var groupList: ListView? = null
         var groupSpinner: Spinner? = null
+        var groupPane: View? = null
+        var groupLine: View? = null
         val mainPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(if (medium) 18 else 12), dp(18), dp(if (medium) 18 else 12), 0) }
 
         if (medium) {
@@ -1120,8 +1122,9 @@ class MainActivity : Activity() {
             }
             gp.addView(gl, lp(-1, 0, 1f))
             row.addView(gp, LinearLayout.LayoutParams(dp(if (wide) 250 else 210), -1))
-            row.addView(View(this).apply { setBackgroundColor(C.line) }, LinearLayout.LayoutParams(dp(1), -1))
-            groupList = gl
+            val gLine = View(this).apply { setBackgroundColor(C.line) }
+            row.addView(gLine, LinearLayout.LayoutParams(dp(1), -1))
+            groupList = gl; groupPane = gp; groupLine = gLine
         } else {
             val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
             head.addView(iconButton(R.drawable.ic_back, "Back", 44, C.panel2) { onBack() })
@@ -1142,6 +1145,22 @@ class MainActivity : Activity() {
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         lateinit var render: () -> Unit
         val (box, searchInput) = searchBox(if (medium) "Search in ${title.lowercase()}" else "Search", { q -> query = q; render() })
+        // Live TV on TV/tablet: after a group is chosen the groups column folds away; Left (or this chip) brings it back.
+        val foldable = kind == "live" && groupPane != null
+        var folded = false
+        val foldChip = pill("Groups", iconRes = R.drawable.ic_back) {}
+        foldChip.visibility = View.GONE
+        fun fold(on: Boolean) {
+            if (!foldable) return
+            folded = on
+            groupPane?.visibility = if (on) View.GONE else View.VISIBLE
+            groupLine?.visibility = if (on) View.GONE else View.VISIBLE
+            foldChip.visibility = if (on) View.VISIBLE else View.GONE
+            (foldChip.getChildAt(1) as TextView).text = groups.getOrNull(groupIndex)?.name ?: allLabel
+        }
+        fun showGroups() { fold(false); groupList?.let { gl -> gl.post { gl.requestFocus(); gl.setSelection(groupIndex) } } }
+        foldChip.setOnClickListener { showGroups() }
+        if (foldable) tools.addView(foldChip, lp(-2, dp(44), r = 10))
         tools.addView(box, lp(0, dp(44), 1f))
         if (grid) {
             val sortBtn = pill("Default order") {}
@@ -1199,7 +1218,8 @@ class MainActivity : Activity() {
         collection.id = View.generateViewId()
         if (searchInput.id == View.NO_ID) searchInput.id = View.generateViewId()
         collection.nextFocusUpId = searchInput.id
-        collection.nextFocusRightId = collection.id
+        collection.nextFocusRightId = previewPane?.videoId ?: collection.id
+        previewPane?.linkLeft(collection.id)
         searchInput.nextFocusDownId = collection.id
         groupList?.let { gl ->
             gl.nextFocusRightId = collection.id
@@ -1226,7 +1246,10 @@ class MainActivity : Activity() {
         }
         refreshList = { adapter.notifyDataSetChanged() }
 
-        groupList?.setOnItemClickListener { _, _, position, _ -> groupIndex = position; groupAdapter.notifyDataSetChanged(); selected = null; render() }
+        groupList?.setOnItemClickListener { _, _, position, _ ->
+            groupIndex = position; groupAdapter.notifyDataSetChanged(); selected = null; render()
+            if (foldable) { fold(true); collection.post { collection.requestFocus(); collection.setSelection(0) } }
+        }
         groupSpinner?.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) { if (position != groupIndex) { groupIndex = position; selected = null; render() } }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
@@ -1258,6 +1281,8 @@ class MainActivity : Activity() {
         collection.setOnKeyListener { _, code, ev ->
             if (code == KeyEvent.KEYCODE_MENU && ev.action == KeyEvent.ACTION_UP) {
                 visible.getOrNull(collection.selectedItemPosition)?.let { itemMenu(it, visible) }; true
+            } else if (code == KeyEvent.KEYCODE_DPAD_LEFT && folded) {
+                if (ev.action == KeyEvent.ACTION_DOWN) showGroups(); true
             } else false
         }
         // TV remotes: moving focus over a row updates the preview / details.
@@ -1279,6 +1304,7 @@ class MainActivity : Activity() {
             }
         }
         if (startOnFavs) {
+            fold(true)
             groupSpinner?.setSelection(groupIndex)
             collection.post { collection.requestFocus(); collection.setSelection(0) }
         }
@@ -1335,8 +1361,8 @@ class MainActivity : Activity() {
             h.row.background = if (on) shape(C.panel2, 12, C.accent, 2) else shape(Color.TRANSPARENT, 12)
             h.num.text = if (item.kind == "live" && !mixed) (if (item.num > 0) item.num else position + 1).toString() else ""
             h.num.visibility = if (h.num.text.isEmpty()) View.GONE else View.VISIBLE
-            h.name.text = item.name
-            h.initials.text = initialsOf(item.name)
+            h.name.text = if (item.kind == "live") displayName(item.name) else item.name
+            h.initials.text = initialsOf(h.name.text.toString())
             h.logo.tag = item.logoUrl
             h.logo.setImageDrawable(null)
             if (item.logoUrl.isNotBlank()) loadLogo(item.logoUrl, h.logo)
@@ -1496,7 +1522,15 @@ class MainActivity : Activity() {
         private var current: MediaItem? = null
         private var pending: Runnable? = null
         private var triedTs = false
+        private var leftId = View.NO_ID
         var onWatch: ((MediaItem) -> Unit)? = null
+        val videoId: Int get() = video.id
+        /** Remote: Right from the channel list lands on the small TV (OK = full screen), Down goes into the schedule, Left goes back. */
+        fun linkLeft(id: Int) {
+            leftId = id
+            video.nextFocusLeftId = id; video.nextFocusRightId = video.id; video.nextFocusUpId = video.id
+            for (i in 0 until upcoming.childCount) upcoming.getChildAt(i).nextFocusLeftId = id
+        }
         init {
             video.addView(hint, FrameLayout.LayoutParams(-1, -1))
             video.addView(playerView, FrameLayout.LayoutParams(-1, -1))
@@ -1505,7 +1539,9 @@ class MainActivity : Activity() {
             video.addView(badges, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
             video.addView(chName, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(12)) })
             clickable(video) { current?.let { onWatch?.invoke(it) } }
-            video.isFocusable = false // the remote stays in the channel list; OK on the chosen channel opens full screen
+            video.id = View.generateViewId()
+            video.foreground = tvSelector(16)
+            video.nextFocusDownId = video.id
             view.addView(video, lp(-1, dp(260)))
             view.addView(bigName, lp(-1, -2, t = 16))
             view.addView(nowLabel, lp(-1, -2, t = 8)); view.addView(nowTitle, lp(-1, -2, t = 6)); view.addView(nowDesc, lp(-1, -2, t = 6))
@@ -1516,10 +1552,10 @@ class MainActivity : Activity() {
         fun show(item: MediaItem, siblings: List<MediaItem>?, restartVideo: Boolean = true, force: Boolean = false) {
             val changed = current?.let { sameItem(it, item) } != true
             current = item
-            chName.text = item.name
-            bigName.text = item.name
+            chName.text = displayName(item.name)
+            bigName.text = displayName(item.name)
             if (!changed && !force) return
-            nowLabel.text = ""; nowTitle.text = ""; nowDesc.text = item.category; upcoming.removeAllViews()
+            nowLabel.text = ""; nowTitle.text = ""; nowDesc.text = item.category; upcoming.removeAllViews(); video.nextFocusDownId = video.id
             loadGuide(item)
             if (restartVideo) {
                 pending?.let { main.removeCallbacks(it) }
@@ -1563,13 +1599,21 @@ class MainActivity : Activity() {
                         nowTitle.text = cur.title; nowDesc.text = cur.description
                     } else { nowLabel.text = ""; nowTitle.text = ""; nowDesc.text = "No guide data for this channel" }
                     upcoming.removeAllViews()
-                    list.filter { it.start >= (cur?.stop ?: now) }.take(8).forEach { e ->
-                        val r = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                        r.addView(text(timeFmt.format(Date(e.start * 1000)), 14f, C.muted, 600), lp(dp(56), -2))
+                    val shown = (listOfNotNull(cur) + list.filter { it.start >= (cur?.stop ?: now) }).take(9)
+                    shown.forEach { e ->
+                        val r = LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, dp(10), 0)
+                            id = View.generateViewId(); isFocusable = true; isClickable = true; background = tvSelector(10)
+                            nextFocusLeftId = leftId; nextFocusRightId = id
+                        }
+                        r.addView(text(if (e === cur) "Now" else timeFmt.format(Date(e.start * 1000)), 14f, if (e === cur) C.highlight else C.muted, 600), lp(dp(56), -2))
                         r.addView(text(e.title, 14f, C.text2), lp(0, -2, 1f))
-                        r.setOnClickListener { epgDetails(item, e, null) } // touch only; remote stays in the list
-                        upcoming.addView(r, lp(-1, dp(40)))
+                        r.setOnClickListener { epgDetails(item, e, null) } // OK on the remote (or a tap) shows the details
+                        upcoming.addView(r, lp(-1, dp(42)))
                     }
+                    val rows = (0 until upcoming.childCount).map { upcoming.getChildAt(it) }
+                    rows.firstOrNull()?.let { video.nextFocusDownId = it.id; it.nextFocusUpId = video.id }
+                    rows.lastOrNull()?.let { it.nextFocusDownId = it.id }
                 }
             }
         }
@@ -1634,17 +1678,60 @@ class MainActivity : Activity() {
         }.setNegativeButton("Cancel", null).show()
     }
 
-    /** Reorder screen: OK picks an item up, Up/Down moves it, OK drops it. Touch: tap to pick, tap another row to move it there. [save] gets the new order as original indexes. */
-    private fun arrange(title: String, names: List<String>, save: (List<Int>) -> Unit) {
-        if (names.isEmpty()) { toast("Nothing to arrange yet"); return }
+    /** A tick box for the settings lists. */
+    private fun tickBox(on: Boolean) = text(if (on) "✓" else "", 14f, C.onAccent, 800).apply {
+        gravity = Gravity.CENTER; background = shape(if (on) C.accent else Color.TRANSPARENT, 6, if (on) C.accent else C.muted, 2)
+    }
+
+    /** Settings screen: a list on the left and its buttons in their own column on the right (one press of ▶ from the list). */
+    private fun sideScreen(title: String, hint: String): Triple<LinearLayout, LinearLayout, TextView> {
         val content = shell("settings")
         back = { home() }
-        val order = names.indices.toMutableList()
-        var held = -1
         val page = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(if (medium) 40 else 16), dp(24), dp(if (medium) 40 else 16), dp(16)) }
         content.addView(page, lp(-1, -1))
         page.addView(text(title, 26f, C.text, 800))
-        page.addView(text("Press OK to pick up an item, move it with Up / Down, then press OK again to drop it. The order is saved straight away.", 14f, C.muted, 400, 3).apply { setPadding(0, dp(6), 0, dp(14)) })
+        page.addView(text(hint, 14f, C.muted, 400, 3).apply { setPadding(0, dp(6), 0, dp(6)) })
+        val status = text("", 13f, C.soft, 600, 2).apply { setPadding(0, 0, 0, dp(10)) }
+        page.addView(status)
+        val body = LinearLayout(this).apply { orientation = if (medium) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL }
+        page.addView(body, lp(-1, 0, 1f))
+        return Triple(body, page, status)
+    }
+
+    private fun sideColumn(body: LinearLayout, list: ListView): LinearLayout {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (medium) {
+            body.addView(list, lp(0, -1, 1f))
+            body.addView(ScrollView(this).apply { isFocusable = false; isVerticalScrollBarEnabled = false; addView(col) }, lp(dp(300), -1, l = 24))
+        } else {
+            body.addView(ScrollView(this).apply { isFocusable = false; addView(col) }, lp(-1, dp(170), b = 10))
+            body.addView(list, lp(-1, 0, 1f))
+        }
+        return col
+    }
+
+    private fun sideTitle(label: String) = text(label, 11f, C.soft, 800).apply { letterSpacing = 0.1f; setPadding(dp(4), dp(6), 0, dp(8)) }
+
+    /** Wire Left/Right between the list and the buttons column. */
+    private fun linkSide(list: ListView, col: View) {
+        if (list.id == View.NO_ID) list.id = View.generateViewId()
+        val buttons = mutableListOf<View>()
+        fun walk(v: View) { if (v.isFocusable && v !is ScrollView) buttons.add(v) else if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i)) }
+        walk(col)
+        buttons.forEach { b -> if (b.id == View.NO_ID) b.id = View.generateViewId(); val p = b.parent as? ViewGroup; if (p === col || p?.getChildAt(0) === b) b.nextFocusLeftId = list.id }
+        buttons.firstOrNull()?.let { list.nextFocusRightId = it.id }
+        if (!medium) list.nextFocusUpId = buttons.firstOrNull()?.id ?: View.NO_ID
+    }
+
+    /** Reorder screen. OK ticks items (or tick a whole country on the right) and the buttons move all ticked items together.
+     *  Holding OK on one item picks it up: move it with Up / Down, OK drops it. [save] gets the new order as original indexes. */
+    private fun arrange(title: String, names: List<String>, save: (List<Int>) -> Unit) {
+        if (names.isEmpty()) { toast("Nothing to arrange yet"); return }
+        val (body, _, status) = sideScreen(title, "Press OK to tick items, or pick a whole country on the right, then move them all together. Hold OK on one item to move just that one with ▲ / ▼. The order is saved straight away.")
+        val order = names.indices.toMutableList()
+        val ticked = mutableSetOf<Int>() // original indexes
+        var held = -1
+        var placing = false
         lateinit var list: ListView
         val adapter = object : BaseAdapter() {
             override fun getCount() = order.size
@@ -1653,16 +1740,22 @@ class MainActivity : Activity() {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
                 val v = (convertView as? LinearLayout) ?: LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), 0, dp(14), 0)
-                    addView(text("", 13f, C.faint, 700).apply { gravity = Gravity.END }, lp(dp(28), -2, r = 14))
+                    addView(text("", 13f, C.faint, 700).apply { gravity = Gravity.END }, lp(dp(28), -2, r = 12))
+                    addView(tickBox(false), lp(dp(24), dp(24), r = 12))
                     addView(text("", 15f, C.text, 600), lp(0, -2, 1f))
                     addView(text("", 11f, C.soft, 800).apply { letterSpacing = 0.06f })
                     layoutParams = AbsListView.LayoutParams(-1, dp(50))
                 }
                 val on = position == held
+                val tick = order[position] in ticked
                 (v.getChildAt(0) as TextView).text = (position + 1).toString()
-                (v.getChildAt(1) as TextView).text = names[order[position]]
-                (v.getChildAt(2) as TextView).text = if (on) "▲▼ MOVING" else ""
-                v.background = shape(if (on) C.accentTint else C.panel, 12, if (on) C.accent else C.border, if (on) 2 else 1)
+                (v.getChildAt(1) as TextView).apply {
+                    text = if (tick) "✓" else ""
+                    background = shape(if (tick) C.accent else Color.TRANSPARENT, 6, if (tick) C.accent else C.muted, 2)
+                }
+                (v.getChildAt(2) as TextView).text = names[order[position]]
+                (v.getChildAt(3) as TextView).text = if (on) "▲▼ MOVING" else ""
+                v.background = shape(if (on || tick) C.accentTint else C.panel, 12, if (on) C.accent else C.border, if (on) 2 else 1)
                 return v
             }
         }
@@ -1670,20 +1763,45 @@ class MainActivity : Activity() {
             divider = null; dividerHeight = dp(6); this.adapter = adapter
             selector = tvSelector(12); setDrawSelectorOnTop(true); clipToPadding = false; setPadding(0, 0, 0, dp(16))
         }
-        page.addView(list, lp(if (medium) dp(620) else -1, 0, 1f))
+        val col = sideColumn(body, list)
+        fun refresh() { adapter.notifyDataSetChanged() }
+        fun saved(msg: String) { save(order.toList()); refresh(); status.text = msg }
         fun moveTo(to: Int) {
             if (held < 0 || to < 0 || to >= order.size || to == held) return
             order.add(to, order.removeAt(held)); held = to
-            adapter.notifyDataSetChanged(); list.setSelection(to)
-            save(order.toList())
+            list.setSelection(to)
+            saved("Moving “${names[order[to]]}” · now number ${to + 1}")
+        }
+        fun moveTicked(top: Boolean) {
+            if (ticked.isEmpty()) { status.text = "Tick some items first, or pick a country."; return }
+            val picked = order.filter { it in ticked }; val rest = order.filter { it !in ticked }
+            order.clear(); order.addAll(if (top) picked + rest else rest + picked)
+            val n = picked.size; ticked.clear(); placing = false
+            saved("$n moved to the ${if (top) "top" else "bottom"}, keeping their order. Saved.")
+            list.setSelection(if (top) 0 else order.size - n)
+        }
+        fun placeTicked(position: Int) {
+            val target = order[position]
+            if (target in ticked) { status.text = "Choose an item that isn't ticked: the ticked ones go just above it."; return }
+            val picked = order.filter { it in ticked }; val rest = order.filter { it !in ticked }
+            val at = rest.indexOf(target)
+            order.clear(); order.addAll(rest.take(at) + picked + rest.drop(at))
+            val n = picked.size; ticked.clear(); placing = false
+            saved("$n moved above “${names[target]}”, keeping their order. Saved.")
+            list.setSelection(at)
         }
         list.setOnItemClickListener { _, _, position, _ ->
             when {
-                held < 0 -> held = position
-                held == position -> held = -1
-                else -> { moveTo(position); held = -1 }
+                held >= 0 -> { if (held != position) moveTo(position); held = -1; status.text = "Dropped. Saved." }
+                placing -> placeTicked(position)
+                else -> { val i = order[position]; if (!ticked.remove(i)) ticked.add(i); status.text = if (ticked.isEmpty()) "" else "${ticked.size} ticked · press ▶ for the buttons" }
             }
-            adapter.notifyDataSetChanged()
+            refresh()
+        }
+        list.setOnItemLongClickListener { _, _, position, _ ->
+            held = if (held == position) -1 else position; placing = false
+            status.text = if (held >= 0) "Move “${names[order[position]]}” with ▲ / ▼, then press OK to drop it." else ""
+            refresh(); true
         }
         list.setOnKeyListener { _, code, ev ->
             if (held < 0 || ev.action != KeyEvent.ACTION_DOWN) false
@@ -1694,6 +1812,38 @@ class MainActivity : Activity() {
                 else -> false
             }
         }
+        // Countries: "All UK", "All FR"… tick (or untick) every item of that country.
+        val countries = linkedMapOf<String, MutableList<Int>>()
+        names.forEachIndexed { i, n -> countryOf(n)?.let { countries.getOrPut(it) { mutableListOf() }.add(i) } }
+        countries.entries.removeAll { it.value.size < 2 }
+        if (countries.isNotEmpty()) {
+            col.addView(sideTitle("SELECT A COUNTRY"))
+            countries.entries.chunked(3).forEach { line ->
+                val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                line.forEach { (code, idx) ->
+                    r.addView(pill("All $code") {
+                        val all = ticked.containsAll(idx)
+                        if (all) ticked.removeAll(idx.toSet()) else ticked.addAll(idx)
+                        placing = false; refresh()
+                        status.text = if (all) "$code unticked." else "All $code ticked (${idx.size}). Now choose where to put them."
+                    }.apply { setPadding(dp(12), 0, dp(12), 0) }, lp(0, dp(42), 1f, r = 6))
+                }
+                repeat(3 - line.size) { r.addView(View(this), lp(0, 1, 1f, r = 6)) }
+                col.addView(r, lp(-1, -2, b = 8))
+            }
+        }
+        col.addView(sideTitle("MOVE TICKED"))
+        col.addView(pill("⤒  Move ticked to the top", primary = true) { moveTicked(true) }, lp(-1, dp(44), b = 8))
+        col.addView(pill("⤓  Move ticked to the bottom") { moveTicked(false) }, lp(-1, dp(44), b = 8))
+        col.addView(pill("↕  Move ticked to a place…") {
+            if (ticked.isEmpty()) { status.text = "Tick some items first, or pick a country."; return@pill }
+            placing = true
+            status.text = "Now press OK on the item where they should go: the ticked ones go just above it."
+            list.requestFocus()
+        }, lp(-1, dp(44), b = 8))
+        col.addView(pill("Clear ticks") { ticked.clear(); placing = false; refresh(); status.text = "" }, lp(-1, dp(44), b = 8))
+        col.addView(pill("Done") { home() }, lp(-1, dp(44), b = 8))
+        linkSide(list, col)
         list.post { list.requestFocus(); list.setSelection(0) }
     }
 
@@ -1716,21 +1866,56 @@ class MainActivity : Activity() {
         val groups = source.map { it.category }.distinct().sorted()
         if (groups.isEmpty()) { toast("Load a playlist first"); return }
         val hidden = hiddenGroups(kind).toMutableSet()
-        val checked = BooleanArray(groups.size) { groups[it] !in hidden }
-        val d = AlertDialog.Builder(this).setTitle("Show or hide ${kindTitle(kind)} groups")
-            .setMultiChoiceItems(groups.toTypedArray(), checked) { _, which, isChecked -> if (isChecked) hidden.remove(groups[which]) else hidden.add(groups[which]) }
-            .setPositiveButton("Save") { _, _ -> prefs.edit().putStringSet(hiddenKey(kind), hidden).remove("hidden_groups").apply(); after() }
-            .setNeutralButton(if (hidden.isEmpty()) "Hide all" else "Show all", null)
-            .setNegativeButton("Cancel", null).show()
-        // "Hide all" unticks every group (then tick the ones you want and Save); "Show all" ticks them all again. The dialog stays open.
-        val toggle = d.getButton(AlertDialog.BUTTON_NEUTRAL)
-        toggle.setOnClickListener {
-            val showAll = hidden.size == groups.size || toggle.text.toString() == "Show all"
-            hidden.clear(); if (!showAll) hidden.addAll(groups)
-            for (i in groups.indices) { checked[i] = showAll; d.listView.setItemChecked(i, showAll) }
-            toggle.text = if (showAll) "Hide all" else "Show all"
-            d.listView.setSelection(0); d.listView.requestFocus()
+        val (body, _, status) = sideScreen("Show or hide ${kindTitle(kind)} groups", "Press OK to tick or untick a group: ticked groups are shown. The buttons are in the column on the right, one press of ▶ away.")
+        val adapter = object : BaseAdapter() {
+            override fun getCount() = groups.size
+            override fun getItem(position: Int) = groups[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+                val v = (convertView as? LinearLayout) ?: LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), 0, dp(14), 0)
+                    addView(tickBox(false), lp(dp(24), dp(24), r = 14))
+                    addView(text("", 15f, C.text, 600), lp(0, -2, 1f))
+                    layoutParams = AbsListView.LayoutParams(-1, dp(50))
+                }
+                val on = groups[position] !in hidden
+                (v.getChildAt(0) as TextView).apply {
+                    text = if (on) "✓" else ""
+                    background = shape(if (on) C.accent else Color.TRANSPARENT, 6, if (on) C.accent else C.muted, 2)
+                }
+                (v.getChildAt(1) as TextView).apply { text = groups[position]; setTextColor(if (on) C.text else C.muted) }
+                v.background = shape(C.panel, 12, C.border)
+                return v
+            }
         }
+        val list = ListView(this).apply {
+            divider = null; dividerHeight = dp(6); this.adapter = adapter
+            selector = tvSelector(12); setDrawSelectorOnTop(true); clipToPadding = false; setPadding(0, 0, 0, dp(16))
+        }
+        val col = sideColumn(body, list)
+        lateinit var toggle: LinearLayout
+        fun update() {
+            adapter.notifyDataSetChanged()
+            (toggle.getChildAt(0) as TextView).text = if (hidden.isEmpty()) "Hide all" else "Show all"
+            status.text = "${groups.size - hidden.size} of ${groups.size} groups shown"
+        }
+        list.setOnItemClickListener { _, _, position, _ -> val g = groups[position]; if (!hidden.remove(g)) hidden.add(g); update() }
+        col.addView(sideTitle("ACTIONS"))
+        // "Hide all" unticks every group (then tick the ones you want and Save); "Show all" ticks them all again.
+        toggle = pill("Hide all") {
+            val showAll = hidden.isNotEmpty()
+            hidden.clear(); if (!showAll) hidden.addAll(groups)
+            update()
+        }
+        col.addView(toggle, lp(-1, dp(44), b = 8))
+        col.addView(pill("Save", primary = true) {
+            prefs.edit().putStringSet(hiddenKey(kind), hidden).remove("hidden_groups").apply()
+            toast("Saved"); after(); home()
+        }, lp(-1, dp(44), b = 8))
+        col.addView(pill("Cancel") { home() }, lp(-1, dp(44), b = 8))
+        linkSide(list, col)
+        update()
+        list.post { list.requestFocus(); list.setSelection(0) }
     }
 
     // ---------------------------------------------------------------- favourites & recent

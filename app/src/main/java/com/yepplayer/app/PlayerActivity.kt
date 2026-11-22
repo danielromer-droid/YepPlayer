@@ -241,7 +241,7 @@ class PlayerActivity : Activity() {
     private fun updateInfo() {
         if (!live) return
         infoNum.text = nums.getOrNull(index)?.toString() ?: ""
-        infoName.text = names[index]
+        infoName.text = displayName(names[index])
         nowTitle.text = ""; nowTime.text = ""; nextTitle.text = ""; nextTime.text = ""
         nowBar.layoutParams = FrameLayout.LayoutParams(0, -1)
         val id = ids.getOrNull(index) ?: return
@@ -338,7 +338,7 @@ class PlayerActivity : Activity() {
         val p = player ?: return
         saveResume()
         currentUrl = url
-        title.text = names[index]
+        title.text = displayName(names[index])
         if (live) prefs.edit().putString("last_live_url", urls[index]).apply()
         errorBox.visibility = View.GONE
         updateInfo()
@@ -388,7 +388,7 @@ class PlayerActivity : Activity() {
                     layoutParams = android.widget.AbsListView.LayoutParams(-1, dp(56))
                 }
                 (row.getChildAt(0) as TextView).text = nums.getOrNull(position)?.toString() ?: "${position + 1}"
-                (row.getChildAt(1) as TextView).text = names[position]
+                (row.getChildAt(1) as TextView).text = displayName(names[position])
                 row.getChildAt(2).visibility = if (position == index) View.VISIBLE else View.GONE
                 return row
             }
