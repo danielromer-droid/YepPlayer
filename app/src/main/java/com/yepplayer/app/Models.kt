@@ -44,7 +44,7 @@ data class AccountInfo(
 )
 
 /** Channel name without a country tag in front, e.g. "US ★ Tennis Channel" -> "Tennis Channel". */
-private val countryTag = Regex("^\\s*[A-Z]{2,3}\\s*[★☆❖⭐|:•]+\\s*")
+private val countryTag = Regex("^\\s*[A-Z]{2,3}\\s*[^\\p{L}\\p{N}\\s(\\[+&'.!-]+\\s*")
 fun displayName(name: String): String = name.replace(countryTag, "").ifBlank { name }
 
 /** Country code at the start of a group name ("UK ❖ SPORTS", "FR| CINEMA", "DE KINO"), or null. */

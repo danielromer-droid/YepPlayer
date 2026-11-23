@@ -1347,7 +1347,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun initialsOf(name: String) = name.split(' ', '-', '|', ':').filter { it.isNotBlank() }.take(2).joinToString("") { it.take(if (it.length <= 3) 3 else 1) }.uppercase().take(4)
+    private fun initialsOf(name: String) = displayName(name).split(' ', '-', '|', ':').filter { t -> t.any { it.isLetterOrDigit() } }.take(2).joinToString("") { it.take(if (it.length <= 3) 3 else 1) }.uppercase().take(4)
 
     private inner class RowAdapter(val kind: String, val mixed: Boolean, val source: () -> Pair<List<MediaItem>, MediaItem?>) : BaseAdapter() {
         override fun getCount() = source().first.size
@@ -1363,6 +1363,8 @@ class MainActivity : Activity() {
             h.num.visibility = if (h.num.text.isEmpty()) View.GONE else View.VISIBLE
             h.name.text = if (item.kind == "live") displayName(item.name) else item.name
             h.initials.text = initialsOf(h.name.text.toString())
+            // Letters only when there is no logo, so they never show through a see-through logo.
+            h.initials.visibility = if (item.logoUrl.isBlank() || synchronized(failedLogos) { item.logoUrl in failedLogos }) View.VISIBLE else View.INVISIBLE
             h.logo.tag = item.logoUrl
             h.logo.setImageDrawable(null)
             if (item.logoUrl.isNotBlank()) loadLogo(item.logoUrl, h.logo)
