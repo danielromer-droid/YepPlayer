@@ -1359,7 +1359,7 @@ class MainActivity : Activity() {
             val item = rows[position]
             val on = sel != null && sameItem(sel, item)
             h.row.background = if (on) shape(C.panel2, 12, C.accent, 2) else shape(Color.TRANSPARENT, 12)
-            h.num.text = if (item.kind == "live" && !mixed) (if (item.num > 0) item.num else position + 1).toString() else ""
+            h.num.text = "" // no channel numbers in the list (the user asked for a cleaner list)
             h.num.visibility = if (h.num.text.isEmpty()) View.GONE else View.VISIBLE
             h.name.text = if (item.kind == "live") displayName(item.name) else item.name
             h.initials.text = initialsOf(h.name.text.toString())
