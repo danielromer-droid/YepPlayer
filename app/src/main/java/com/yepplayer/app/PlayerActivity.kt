@@ -20,7 +20,13 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.annotation.OptIn
+import androidx.media3.common.C as MC
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
+import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -92,7 +98,7 @@ class PlayerActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         view = PlayerView(this).apply {
-            setShowSubtitleButton(true)
+            setShowSubtitleButton(false) // our own Subtitles button in the top bar
             setShowNextButton(false)
             setShowPreviousButton(false)
             keepScreenOn = true
@@ -125,6 +131,7 @@ class PlayerActivity : Activity() {
         title = TextView(this).apply { textSize = 17f; setTextColor(Color.WHITE); setPadding(dp(12), 0, dp(10), 0); maxLines = 1; typeface = android.graphics.Typeface.DEFAULT_BOLD }
         topBar.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
         if (urls[index].startsWith("http")) topBar.addView(roundIcon(R.drawable.ic_record, "Record") { record() })
+        topBar.addView(roundIcon(androidx.media3.ui.R.drawable.exo_ic_subtitle_on, "Subtitles") { subtitleMenu() })
         topBar.addView(roundIcon(R.drawable.ic_aspect, "Aspect ratio") { cycleResize() })
         root.addView(topBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
 
@@ -289,7 +296,12 @@ class PlayerActivity : Activity() {
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(20000)
-        val sources = DefaultMediaSourceFactory(Source.guarded(DefaultDataSource.Factory(this, http)))
+        // MPEG-TS streams: look for US/Canada closed captions (CEA-608 and CEA-708) in the video, as well as DVB subtitles.
+        val captions = listOf(
+            Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_CEA608).setAccessibilityChannel(1).build(),
+            Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_CEA708).setAccessibilityChannel(1).build())
+        val extractors = DefaultExtractorsFactory().setTsSubtitleFormats(captions)
+        val sources = DefaultMediaSourceFactory(Source.guarded(DefaultDataSource.Factory(this, http)), extractors)
         return ExoPlayer.Builder(this).setMediaSourceFactory(sources).build().apply {
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
@@ -297,8 +309,69 @@ class PlayerActivity : Activity() {
                     if (state == Player.STATE_READY) errorBox.visibility = View.GONE
                 }
                 override fun onPlayerError(error: PlaybackException) = handleError(error)
+                override fun onTracksChanged(tracks: Tracks) = autoSubtitles(tracks)
             })
         }
+    }
+
+    // ---------------------------------------------------------------- subtitles
+
+    private fun textKind(f: Format): String {
+        val m = (f.codecs ?: "") + " " + (f.sampleMimeType ?: "")
+        return when {
+            m.contains("dvbsubs") -> "Broadcaster subtitles"
+            m.contains("cea-608") -> "Closed captions"
+            m.contains("cea-708") -> "Closed captions (digital)"
+            else -> "Subtitles"
+        }
+    }
+
+    private fun textLabel(f: Format): String {
+        val lang = f.language?.takeIf { it.isNotBlank() && it != "und" }?.let { java.util.Locale(it).displayLanguage.replaceFirstChar { c -> c.uppercase() } }
+        return listOfNotNull(lang ?: f.label, textKind(f)).distinct().joinToString(" · ")
+    }
+
+    private fun textTracks(tracks: Tracks) = tracks.groups.filter { it.type == MC.TRACK_TYPE_TEXT }.flatMap { g -> (0 until g.length).filter { g.isTrackSupported(it) }.map { g to it } }
+
+    private fun selectText(group: Tracks.Group?, track: Int) {
+        val p = player ?: return
+        val b = p.trackSelectionParameters.buildUpon()
+        if (group == null) b.setTrackTypeDisabled(MC.TRACK_TYPE_TEXT, true)
+        else b.setTrackTypeDisabled(MC.TRACK_TYPE_TEXT, false).setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, track))
+        p.trackSelectionParameters = b.build()
+    }
+
+    /** When subtitles were turned on, keep them on for every channel (same language when it has it). */
+    private fun autoSubtitles(tracks: Tracks) {
+        if (!prefs.getBoolean("subs_on", false)) return
+        val list = textTracks(tracks)
+        if (list.isEmpty() || list.any { (g, i) -> g.isTrackSelected(i) }) return
+        val lang = prefs.getString("subs_lang", "") ?: ""
+        val pick = list.firstOrNull { (g, i) -> lang.isNotEmpty() && g.getTrackFormat(i).language == lang } ?: list.first()
+        selectText(pick.first, pick.second)
+    }
+
+    private fun subtitleMenu() {
+        val p = player ?: return
+        val list = textTracks(p.currentTracks)
+        if (list.isEmpty()) {
+            android.app.AlertDialog.Builder(this).setTitle("Subtitles")
+                .setMessage("This channel isn't sending any subtitles in its stream right now.\n\nSome providers remove them, and teletext subtitles (page 888) can't be read by the player. Try the same channel in another group or quality (HD / FHD), as some versions keep them.")
+                .setPositiveButton("OK", null).show()
+            return
+        }
+        val on = list.indexOfFirst { (g, i) -> g.isTrackSelected(i) }
+        val labels = listOf("Off") + list.map { (g, i) -> textLabel(g.getTrackFormat(i)) }
+        android.app.AlertDialog.Builder(this).setTitle("Subtitles")
+            .setSingleChoiceItems(labels.toTypedArray(), on + 1) { d, which ->
+                if (which == 0) { selectText(null, 0); prefs.edit().putBoolean("subs_on", false).apply() }
+                else {
+                    val (g, i) = list[which - 1]
+                    selectText(g, i)
+                    prefs.edit().putBoolean("subs_on", true).putString("subs_lang", g.getTrackFormat(i).language ?: "").apply()
+                }
+                d.dismiss()
+            }.setNegativeButton("Close", null).show()
     }
 
     private fun handleError(error: PlaybackException) {
