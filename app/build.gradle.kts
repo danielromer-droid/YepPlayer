@@ -7,7 +7,7 @@ val releaseKeystore = System.getenv("YEP_KEYSTORE_FILE")?.let { file(it) }?.take
 android {
     namespace = "com.yepplayer.app"
     compileSdk = 35
-    defaultConfig { applicationId = "com.yepplayer.app"; minSdk = 26; targetSdk = 35; versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.plus(100) ?: 5); versionName = "0.6.4" }
+    defaultConfig { applicationId = "com.yepplayer.app"; minSdk = 26; targetSdk = 35; versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.plus(100) ?: 5); versionName = "0.6.5" }
     signingConfigs {
         if (releaseKeystore != null) create("release") {
             storeFile = releaseKeystore
@@ -36,5 +36,6 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
     implementation("androidx.media3:media3-datasource:1.5.1")
     implementation("androidx.media3:media3-common:1.5.1")
+    implementation("androidx.media3:media3-extractor:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
 }
