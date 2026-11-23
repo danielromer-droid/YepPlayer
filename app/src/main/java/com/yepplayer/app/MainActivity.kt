@@ -1083,8 +1083,13 @@ class MainActivity : Activity() {
         var selected: MediaItem? = null
         var visible = base
 
+        // See-through style (TV): the chosen channel plays full screen behind semi-transparent panels.
+        val overlay = kind == "live" && wide && !guide && prefs.getBoolean("live_overlay", true)
+        fun glass(c: Int, a: Int) = Color.argb(a, Color.red(c), Color.green(c), Color.blue(c))
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        content.addView(row, lp(-1, -1))
+        val stack = FrameLayout(this)
+        if (overlay) { content.addView(stack, lp(-1, -1)); stack.addView(row, FrameLayout.LayoutParams(-1, -1)) }
+        else content.addView(row, lp(-1, -1))
 
         // Groups pane (or a spinner on phones).
         val groupAdapter = object : BaseAdapter() {
@@ -1111,7 +1116,7 @@ class MainActivity : Activity() {
         val mainPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(if (medium) 18 else 12), dp(18), dp(if (medium) 18 else 12), 0) }
 
         if (medium) {
-            val gp = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(C.rail); setPadding(dp(12), dp(18), dp(12), dp(12)) }
+            val gp = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(if (overlay) glass(C.rail, 225) else C.rail); setPadding(dp(12), dp(18), dp(12), dp(12)) }
             val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), 0, 0, dp(12)) }
             head.addView(iconButton(R.drawable.ic_back, "Back", 44, C.panel2) { onBack() })
             head.addView(text(title, 21f, C.text, 800).apply { setPadding(dp(10), 0, 0, 0) }, lp(0, -2, 1f))
@@ -1139,7 +1144,10 @@ class MainActivity : Activity() {
                 groupSpinner = sp
             }
         }
-        row.addView(mainPane, lp(0, -1, if (grid) 1f else (if (wide && kind == "live") 1.05f else 1f)))
+        if (overlay) {
+            mainPane.setBackgroundColor(glass(C.bg, 205))
+            row.addView(mainPane, lp(dp(440), -1))
+        } else row.addView(mainPane, lp(0, -1, if (grid) 1f else (if (wide && kind == "live") 1.05f else 1f)))
 
         // Search + sort.
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
@@ -1184,10 +1192,16 @@ class MainActivity : Activity() {
         mainPane.addView(countLabel)
 
         // Preview pane for live TV on wide screens.
-        val previewPane = if (kind == "live" && wide) PreviewPane() else null
+        val previewPane = if (kind == "live" && wide) PreviewPane(overlay) else null
         previewPane?.let {
-            row.addView(View(this).apply { setBackgroundColor(C.line) }, LinearLayout.LayoutParams(dp(1), -1))
-            row.addView(it.view, lp(0, -1, 1f))
+            if (overlay) {
+                stack.addView(it.video, 0, FrameLayout.LayoutParams(-1, -1))
+                row.addView(View(this), lp(0, 1, 1f))
+                row.addView(it.view, lp(dp(430), -2, r = 24, b = 24).apply { gravity = Gravity.BOTTOM })
+            } else {
+                row.addView(View(this).apply { setBackgroundColor(C.line) }, LinearLayout.LayoutParams(dp(1), -1))
+                row.addView(it.view, lp(0, -1, 1f))
+            }
         }
 
         fun select(item: MediaItem) {
@@ -1218,8 +1232,26 @@ class MainActivity : Activity() {
         collection.id = View.generateViewId()
         if (searchInput.id == View.NO_ID) searchInput.id = View.generateViewId()
         collection.nextFocusUpId = searchInput.id
-        collection.nextFocusRightId = previewPane?.videoId ?: collection.id
+        collection.nextFocusRightId = if (overlay) collection.id else previewPane?.videoId ?: collection.id
         previewPane?.linkLeft(collection.id)
+        // See-through style: Right goes straight to the schedule; Back hides the panels to watch, any key brings them back.
+        if (overlay && previewPane != null) {
+            previewPane.onFirstRow = { id -> collection.nextFocusRightId = if (id != View.NO_ID) id else collection.id }
+            stack.setOnKeyListener { _, code, ev ->
+                if (row.visibility == View.VISIBLE || code == KeyEvent.KEYCODE_BACK) false
+                else {
+                    if (ev.action == KeyEvent.ACTION_UP) {
+                        if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER) selected?.let { previewPane.onWatch?.invoke(it) }
+                        else { row.visibility = View.VISIBLE; stack.isFocusable = false; collection.requestFocus() }
+                    }
+                    true
+                }
+            }
+            back = {
+                if (row.visibility == View.VISIBLE) { row.visibility = View.INVISIBLE; stack.isFocusable = true; stack.requestFocus() }
+                else { row.visibility = View.VISIBLE; stack.isFocusable = false; onBack() }
+            }
+        }
         searchInput.nextFocusDownId = collection.id
         groupList?.let { gl ->
             gl.nextFocusRightId = collection.id
@@ -1347,7 +1379,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun initialsOf(name: String) = name.split(' ', '-', '|', ':').filter { it.isNotBlank() }.take(2).joinToString("") { it.take(if (it.length <= 3) 3 else 1) }.uppercase().take(4)
+    private fun initialsOf(name: String) = displayName(name).split(' ', '-', '|', ':').filter { t -> t.any { it.isLetterOrDigit() } }.take(2).joinToString("") { it.take(if (it.length <= 3) 3 else 1) }.uppercase().take(4)
 
     private inner class RowAdapter(val kind: String, val mixed: Boolean, val source: () -> Pair<List<MediaItem>, MediaItem?>) : BaseAdapter() {
         override fun getCount() = source().first.size
@@ -1359,10 +1391,12 @@ class MainActivity : Activity() {
             val item = rows[position]
             val on = sel != null && sameItem(sel, item)
             h.row.background = if (on) shape(C.panel2, 12, C.accent, 2) else shape(Color.TRANSPARENT, 12)
-            h.num.text = if (item.kind == "live" && !mixed) (if (item.num > 0) item.num else position + 1).toString() else ""
+            h.num.text = "" // no channel numbers in the list (the user asked for a cleaner list)
             h.num.visibility = if (h.num.text.isEmpty()) View.GONE else View.VISIBLE
             h.name.text = if (item.kind == "live") displayName(item.name) else item.name
             h.initials.text = initialsOf(h.name.text.toString())
+            // Letters only when there is no logo, so they never show through a see-through logo.
+            h.initials.visibility = if (item.logoUrl.isBlank() || synchronized(failedLogos) { item.logoUrl in failedLogos }) View.VISIBLE else View.INVISIBLE
             h.logo.tag = item.logoUrl
             h.logo.setImageDrawable(null)
             if (item.logoUrl.isNotBlank()) loadLogo(item.logoUrl, h.logo)
@@ -1508,9 +1542,13 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- live preview pane
 
-    private inner class PreviewPane {
-        val view = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(20), dp(12)) }
-        private val video = FrameLayout(this@MainActivity).apply { background = shape(Color.rgb(5, 7, 11), 16, C.border); clipToOutline = true }
+    private inner class PreviewPane(val seeThrough: Boolean = false) {
+        val view = LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(20), dp(12))
+            if (seeThrough) background = shape(Color.argb(200, Color.red(C.bg), Color.green(C.bg), Color.blue(C.bg)), 20, C.border)
+        }
+        val video = FrameLayout(this@MainActivity).apply { background = if (seeThrough) shape(Color.BLACK, 0) else shape(Color.rgb(5, 7, 11), 16, C.border); clipToOutline = true }
+        var onFirstRow: ((Int) -> Unit)? = null
         private val playerView = PlayerView(this@MainActivity).apply { useController = false; setShutterBackgroundColor(Color.rgb(5, 7, 11)) }
         private val hint = text("Video preview · press OK again for full screen", 13f, C.faint).apply { gravity = Gravity.CENTER }
         private val chName = text("", 15f, C.text, 700)
@@ -1536,18 +1574,28 @@ class MainActivity : Activity() {
             video.addView(playerView, FrameLayout.LayoutParams(-1, -1))
             val badges = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
             badges.addView(badge("LIVE", C.red)); badges.addView(View(this@MainActivity), lp(dp(6), 1))
-            video.addView(badges, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
-            video.addView(chName, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(12)) })
+            if (seeThrough) {
+                badges.addView(chName.apply { setShadowLayer(6f, 0f, 1f, Color.BLACK) }, lp(-2, -2, l = 4))
+                badges.gravity = Gravity.CENTER_VERTICAL
+                video.addView(badges, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(18), dp(24), 0) })
+                hint.text = ""
+            } else {
+                video.addView(badges, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
+                video.addView(chName, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(12)) })
+            }
             clickable(video) { current?.let { onWatch?.invoke(it) } }
             video.id = View.generateViewId()
-            video.foreground = tvSelector(16)
             video.nextFocusDownId = video.id
-            view.addView(video, lp(-1, dp(260)))
-            view.addView(bigName, lp(-1, -2, t = 16))
+            if (seeThrough) { video.isFocusable = false; video.isClickable = false; view.addView(bigName, lp(-1, -2)) }
+            else {
+                video.foreground = tvSelector(16)
+                view.addView(video, lp(-1, dp(260)))
+                view.addView(bigName, lp(-1, -2, t = 16))
+            }
             view.addView(nowLabel, lp(-1, -2, t = 8)); view.addView(nowTitle, lp(-1, -2, t = 6)); view.addView(nowDesc, lp(-1, -2, t = 6))
             view.addView(View(this@MainActivity).apply { setBackgroundColor(C.line) }, lp(-1, dp(1), t = 14))
             view.addView(text("SCHEDULE", 11f, C.soft, 800).apply { letterSpacing = 0.1f }, lp(-1, -2, t = 10))
-            view.addView(ScrollView(this@MainActivity).apply { isFocusable = false; addView(upcoming) }, lp(-1, 0, 1f, t = 4))
+            view.addView(ScrollView(this@MainActivity).apply { isFocusable = false; addView(upcoming) }, if (seeThrough) lp(-1, dp(4 * 42 + 4), t = 4) else lp(-1, 0, 1f, t = 4))
         }
         fun show(item: MediaItem, siblings: List<MediaItem>?, restartVideo: Boolean = true, force: Boolean = false) {
             val changed = current?.let { sameItem(it, item) } != true
@@ -1555,13 +1603,13 @@ class MainActivity : Activity() {
             chName.text = displayName(item.name)
             bigName.text = displayName(item.name)
             if (!changed && !force) return
-            nowLabel.text = ""; nowTitle.text = ""; nowDesc.text = item.category; upcoming.removeAllViews(); video.nextFocusDownId = video.id
+            nowLabel.text = ""; nowTitle.text = ""; nowDesc.text = item.category; upcoming.removeAllViews(); video.nextFocusDownId = video.id; onFirstRow?.invoke(View.NO_ID)
             loadGuide(item)
             if (restartVideo) {
                 pending?.let { main.removeCallbacks(it) }
                 preview?.stop()
                 val restricted = prefs.getString("pin", null) != null && isRestricted(item)
-                hint.text = if (restricted) "Protected by parental PIN" else "Video preview · press OK again for full screen"
+                hint.text = if (restricted) "Protected by parental PIN" else if (seeThrough) "" else "Video preview · press OK again for full screen"
                 if (!restricted) pending = Runnable { startPreview(item) }.also { main.postDelayed(it, if (force) 900L else 650L) }
             }
         }
@@ -1612,7 +1660,8 @@ class MainActivity : Activity() {
                         upcoming.addView(r, lp(-1, dp(42)))
                     }
                     val rows = (0 until upcoming.childCount).map { upcoming.getChildAt(it) }
-                    rows.firstOrNull()?.let { video.nextFocusDownId = it.id; it.nextFocusUpId = video.id }
+                    rows.firstOrNull()?.let { video.nextFocusDownId = it.id; it.nextFocusUpId = if (seeThrough) it.id else video.id }
+                    onFirstRow?.invoke(rows.firstOrNull()?.id ?: View.NO_ID)
                     rows.lastOrNull()?.let { it.nextFocusDownId = it.id }
                 }
             }
@@ -2100,7 +2149,7 @@ class MainActivity : Activity() {
     }
 
     private fun settings() {
-        val options = arrayOf("Playlists", "Account information", "Hide / show groups", "Arrange order", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "Colours", "Home screen style", "About YepPlayer")
+        val options = arrayOf("Playlists", "Account information", "Hide / show groups", "Arrange order", "Parental PIN", "Recently watched", "Refresh playlist data", "Network safety", "Colours", "Home screen style", "Live TV style", "About YepPlayer")
         AlertDialog.Builder(this).setTitle("Settings").setItems(options) { _, which ->
             when (which) {
                 0 -> configure()
@@ -2113,6 +2162,9 @@ class MainActivity : Activity() {
                 8 -> colours()
                 9 -> AlertDialog.Builder(this).setTitle("Home screen style").setSingleChoiceItems(arrayOf("Full-screen suggestions", "Classic tiles"), if (prefs.getBoolean("start_page", true)) 0 else 1) { d, w ->
                     prefs.edit().putBoolean("start_page", w == 0).apply(); d.dismiss(); home()
+                }.setNegativeButton("Cancel", null).show()
+                10 -> AlertDialog.Builder(this).setTitle("Live TV style").setSingleChoiceItems(arrayOf("See-through over the live channel", "Classic with small TV"), if (prefs.getBoolean("live_overlay", true)) 0 else 1) { d, w ->
+                    prefs.edit().putBoolean("live_overlay", w == 0).apply(); d.dismiss(); toast("Saved")
                 }.setNegativeButton("Cancel", null).show()
                 6 -> { cache.clear(); nowCache.clear(); detailsCache.clear(); logoCache.evictAll(); synchronized(failedLogos) { failedLogos.clear() }; prefs.edit().remove("acct_time|${profile?.base}").apply(); toast("Playlist data will reload") }
                 else -> AlertDialog.Builder(this).setTitle("YepPlayer ${packageManager.getPackageInfo(packageName, 0).versionName}")
