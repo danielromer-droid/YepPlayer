@@ -1542,12 +1542,12 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------------- live preview pane
 
-    private inner class PreviewPane(val overlay: Boolean = false) {
+    private inner class PreviewPane(val seeThrough: Boolean = false) {
         val view = LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(20), dp(12))
-            if (overlay) background = shape(Color.argb(200, Color.red(C.bg), Color.green(C.bg), Color.blue(C.bg)), 20, C.border)
+            if (seeThrough) background = shape(Color.argb(200, Color.red(C.bg), Color.green(C.bg), Color.blue(C.bg)), 20, C.border)
         }
-        val video = FrameLayout(this@MainActivity).apply { background = if (overlay) shape(Color.BLACK, 0) else shape(Color.rgb(5, 7, 11), 16, C.border); clipToOutline = true }
+        val video = FrameLayout(this@MainActivity).apply { background = if (seeThrough) shape(Color.BLACK, 0) else shape(Color.rgb(5, 7, 11), 16, C.border); clipToOutline = true }
         var onFirstRow: ((Int) -> Unit)? = null
         private val playerView = PlayerView(this@MainActivity).apply { useController = false; setShutterBackgroundColor(Color.rgb(5, 7, 11)) }
         private val hint = text("Video preview · press OK again for full screen", 13f, C.faint).apply { gravity = Gravity.CENTER }
@@ -1574,7 +1574,7 @@ class MainActivity : Activity() {
             video.addView(playerView, FrameLayout.LayoutParams(-1, -1))
             val badges = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
             badges.addView(badge("LIVE", C.red)); badges.addView(View(this@MainActivity), lp(dp(6), 1))
-            if (overlay) {
+            if (seeThrough) {
                 badges.addView(chName.apply { setShadowLayer(6f, 0f, 1f, Color.BLACK) }, lp(-2, -2, l = 4))
                 badges.gravity = Gravity.CENTER_VERTICAL
                 video.addView(badges, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(18), dp(24), 0) })
@@ -1586,7 +1586,7 @@ class MainActivity : Activity() {
             clickable(video) { current?.let { onWatch?.invoke(it) } }
             video.id = View.generateViewId()
             video.nextFocusDownId = video.id
-            if (overlay) { video.isFocusable = false; video.isClickable = false; view.addView(bigName, lp(-1, -2)) }
+            if (seeThrough) { video.isFocusable = false; video.isClickable = false; view.addView(bigName, lp(-1, -2)) }
             else {
                 video.foreground = tvSelector(16)
                 view.addView(video, lp(-1, dp(260)))
@@ -1595,7 +1595,7 @@ class MainActivity : Activity() {
             view.addView(nowLabel, lp(-1, -2, t = 8)); view.addView(nowTitle, lp(-1, -2, t = 6)); view.addView(nowDesc, lp(-1, -2, t = 6))
             view.addView(View(this@MainActivity).apply { setBackgroundColor(C.line) }, lp(-1, dp(1), t = 14))
             view.addView(text("SCHEDULE", 11f, C.soft, 800).apply { letterSpacing = 0.1f }, lp(-1, -2, t = 10))
-            view.addView(ScrollView(this@MainActivity).apply { isFocusable = false; addView(upcoming) }, if (overlay) lp(-1, dp(4 * 42 + 4), t = 4) else lp(-1, 0, 1f, t = 4))
+            view.addView(ScrollView(this@MainActivity).apply { isFocusable = false; addView(upcoming) }, if (seeThrough) lp(-1, dp(4 * 42 + 4), t = 4) else lp(-1, 0, 1f, t = 4))
         }
         fun show(item: MediaItem, siblings: List<MediaItem>?, restartVideo: Boolean = true, force: Boolean = false) {
             val changed = current?.let { sameItem(it, item) } != true
@@ -1609,7 +1609,7 @@ class MainActivity : Activity() {
                 pending?.let { main.removeCallbacks(it) }
                 preview?.stop()
                 val restricted = prefs.getString("pin", null) != null && isRestricted(item)
-                hint.text = if (restricted) "Protected by parental PIN" else if (overlay) "" else "Video preview · press OK again for full screen"
+                hint.text = if (restricted) "Protected by parental PIN" else if (seeThrough) "" else "Video preview · press OK again for full screen"
                 if (!restricted) pending = Runnable { startPreview(item) }.also { main.postDelayed(it, if (force) 900L else 650L) }
             }
         }
@@ -1660,7 +1660,7 @@ class MainActivity : Activity() {
                         upcoming.addView(r, lp(-1, dp(42)))
                     }
                     val rows = (0 until upcoming.childCount).map { upcoming.getChildAt(it) }
-                    rows.firstOrNull()?.let { video.nextFocusDownId = it.id; it.nextFocusUpId = if (overlay) it.id else video.id }
+                    rows.firstOrNull()?.let { video.nextFocusDownId = it.id; it.nextFocusUpId = if (seeThrough) it.id else video.id }
                     onFirstRow?.invoke(rows.firstOrNull()?.id ?: View.NO_ID)
                     rows.lastOrNull()?.let { it.nextFocusDownId = it.id }
                 }
